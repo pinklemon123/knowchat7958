@@ -1,0 +1,2 @@
+GreenChat storage layer SHA-256 test fixture.
+文件内容固定，用于验证 PowerShell 与 Node.js 的哈希结果一致。

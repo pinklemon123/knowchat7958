@@ -1,0 +1,14 @@
+.git
+.next
+.venv
+.venv311
+coverage
+dist
+node_modules
+out
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+api_test.py
