@@ -96,7 +96,9 @@ export default function RecentPage() {
   const [selected, setSelected] = useState<RecentItem | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [coverVersion, setCoverVersion] = useState(() => Date.now());
+  // Keep the first server and client render identical. A timestamp initializer runs
+  // once during SSR and again during hydration, producing different image URLs.
+  const [coverVersion, setCoverVersion] = useState(0);
   const [coverVisible, setCoverVisible] = useState(true);
   const [coverMessage, setCoverMessage] = useState("");
 
