@@ -1,15 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useMemo, useRef, useState, useEffect, type DragEvent } from "react";
 import {
+  Archive,
   Check,
   File,
   FileImage,
   FileText,
+  FolderInput,
   MoreHorizontal,
   Search,
   Sparkles,
   Star,
+  Trash2,
   UploadCloud,
   X
 } from "lucide-react";
@@ -19,6 +23,7 @@ type InboxItem = {
   id: string;
   title: string;
   type: "document" | "image" | "webpage" | "other";
+  collectionId: string | null;
   collectionName: string | null;
   createdAt: string;
   primaryFileId: string | null;
@@ -44,6 +49,7 @@ type UploadResponse = {
   error?: string;
   existingItemId?: string;
 };
+type Collection = { id:string; name:string; itemCount:number };
 
 function formatBytes(value: number | null) {
   if (value === null) return "—";
@@ -101,6 +107,10 @@ export default function InboxPage() {
   const [dragging, setDragging] = useState(false);
   const [focusedItem, setFocusedItem] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [menuItem, setMenuItem] = useState<string | null>(null);
+  const [busyItem, setBusyItem] = useState<string | null>(null);
+  const [draggingItem,setDraggingItem]=useState<string|null>(null);
+  const [collections,setCollections]=useState<Collection[]>([]);
 
   const loadItems = useCallback(async () => {
     setLoadError("");
@@ -120,6 +130,7 @@ export default function InboxPage() {
   useEffect(() => {
     void loadItems();
   }, [loadItems]);
+  useEffect(()=>{const loadCollections=async()=>{try{const response=await fetch("/api/collections",{cache:"no-store"});const data=await response.json();if(data.ok)setCollections(data.collections)}catch{}};void loadCollections();const refresh=()=>{void loadItems();void loadCollections()};window.addEventListener("library:items-changed",refresh);window.addEventListener("library:collections-changed",refresh);return()=>{window.removeEventListener("library:items-changed",refresh);window.removeEventListener("library:collections-changed",refresh)}},[loadItems]);
 
   const updateTask = useCallback((id: string, patch: Partial<UploadTask>) => {
     setTasks((current) => current.map((task) => (task.id === id ? { ...task, ...patch } : task)));
@@ -199,6 +210,25 @@ export default function InboxPage() {
       window.setTimeout(() => setFocusedItem(null), 2200);
     } else {
       setNotice("已有资料不在当前待整理列表中，可在文件库开放后直接定位。");
+    }
+  }
+
+  async function runItemAction(item: InboxItem, action: "star" | "move" | "move-collection" | "trash", payload: Record<string, unknown> = {}) {
+    setBusyItem(item.id);
+    setMenuItem(null);
+    try {
+      const response = await fetch(`/api/library/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...payload })
+      });
+      if (!response.ok) throw new Error("操作失败");
+      await loadItems();
+      if(action==="move-collection")window.dispatchEvent(new Event("library:collections-changed"));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "操作失败");
+    } finally {
+      setBusyItem(null);
     }
   }
 
@@ -315,9 +345,12 @@ export default function InboxPage() {
             const isImage = item.type === "image" && item.primaryFileId;
             return (
               <article
-                className={`${styles.fileRow} ${focusedItem === item.id ? styles.focusedRow : ""}`}
+                className={`${styles.fileRow} ${focusedItem === item.id ? styles.focusedRow : ""} ${busyItem === item.id ? styles.busyRow : ""} ${draggingItem===item.id?styles.draggingFileRow:""}`}
                 id={`inbox-item-${item.id}`}
                 key={item.id}
+                draggable
+                onDragStart={event=>{setDraggingItem(item.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-library-item-id",item.id);event.dataTransfer.setData("text/plain",item.id)}}
+                onDragEnd={()=>setDraggingItem(null)}
               >
                 <label className={styles.checkbox}><input type="checkbox" aria-label={`选择 ${item.title}`} /><span /></label>
                 <div className={styles.nameCell}>
@@ -329,9 +362,7 @@ export default function InboxPage() {
                     </span>
                   )}
                   <div>
-                    {item.primaryFileId ? (
-                      <a href={`/api/files/${item.primaryFileId}/content`} target="_blank" rel="noreferrer">{item.primaryFileName || item.title}</a>
-                    ) : <strong>{item.primaryFileName || item.title}</strong>}
+                    <Link href={`/item/${item.id}`}>{item.primaryFileName || item.title}</Link>
                     <small>{fileLabel(item)} · {formatBytes(item.primarySizeBytes)}</small>
                   </div>
                 </div>
@@ -341,8 +372,14 @@ export default function InboxPage() {
                 </div>
                 <time className={styles.timeCell} dateTime={item.createdAt}>{formatRelativeTime(item.createdAt)}</time>
                 <div className={styles.rowActions}>
-                  <button type="button" title="收藏功能即将开放" aria-label="收藏"><Star size={17} /></button>
-                  <button type="button" title="更多操作即将开放" aria-label="更多操作"><MoreHorizontal size={18} /></button>
+                  <button className={item.starred ? styles.starred : ""} type="button" title={item.starred ? "取消收藏" : "收藏"} aria-label="收藏" onClick={() => void runItemAction(item, "star", { value: !item.starred })}><Star size={17} fill={item.starred ? "currentColor" : "none"} /></button>
+                  <button type="button" title="更多操作" aria-label="更多操作" onClick={() => setMenuItem(menuItem === item.id ? null : item.id)}><MoreHorizontal size={18} /></button>
+                  {menuItem === item.id && <div className={styles.actionMenu}>
+                    <label className={styles.collectionMove}><FolderInput size={15}/><select value={item.collectionId||""} onChange={event=>void runItemAction(item,"move-collection",{collectionId:event.target.value||null})}><option value="">未分类</option>{collections.map(collection=><option value={collection.id} key={collection.id}>{collection.name}</option>)}</select></label>
+                    <button onClick={() => void runItemAction(item, "move", { location: "library" })}><FileText size={15} />移入文件库</button>
+                    <button onClick={() => void runItemAction(item, "move", { location: "archive" })}><Archive size={15} />归档</button>
+                    <button className={styles.dangerAction} onClick={() => void runItemAction(item, "trash")}><Trash2 size={15} />移到回收站</button>
+                  </div>}
                 </div>
               </article>
             );

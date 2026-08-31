@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { getDataRoot } from "@/lib/storage";
+import { isLibraryRequestAuthenticated, libraryUnauthorizedResponse } from "@/lib/library-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +32,8 @@ async function removeFile(filePath: string) {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (!(await isLibraryRequestAuthenticated(request))) return libraryUnauthorizedResponse();
   const paths = coverPaths();
   try {
     const [content, metadataText] = await Promise.all([
@@ -56,6 +58,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!(await isLibraryRequestAuthenticated(request))) return libraryUnauthorizedResponse();
   const form = await request.formData();
   const cover = form.get("cover");
   if (!(cover instanceof File)) {
@@ -82,7 +85,8 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  if (!(await isLibraryRequestAuthenticated(request))) return libraryUnauthorizedResponse();
   const paths = coverPaths();
   await Promise.all([removeFile(paths.image), removeFile(paths.metadata), removeFile(paths.temporary)]);
   return Response.json({ ok: true });

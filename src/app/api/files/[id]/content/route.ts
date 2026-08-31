@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { getStoredFileRecord } from "@/lib/library-files";
 import { markLibraryItemOpened } from "@/lib/library";
+import { isLibraryRequestAuthenticated, libraryUnauthorizedResponse } from "@/lib/library-auth";
 import { safeResolveStoragePath } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -16,7 +17,8 @@ function contentDisposition(fileName: string, inline: boolean) {
   return `${inline ? "inline" : "attachment"}; filename="${safeAscii}"; filename*=UTF-8''${encoded}`;
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  if (!(await isLibraryRequestAuthenticated(request))) return libraryUnauthorizedResponse();
   const { id } = await context.params;
   if (!UUID_PATTERN.test(id)) {
     return Response.json({ ok: false, code: "INVALID_FILE_ID" }, { status: 400 });

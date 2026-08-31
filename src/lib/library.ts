@@ -1,5 +1,6 @@
-import { getPool } from "./db";
+import { getPool, withTransaction } from "./db";
 import type { LibraryItemFilters, LibraryItemSummary } from "./library-types";
+import { deleteStoredFile } from "./storage";
 
 type LibraryItemRow = {
   id: string;
@@ -175,6 +176,174 @@ export async function markLibraryItemOpened(itemId: string) {
     [itemId]
   );
   return result.rowCount === 1;
+}
+
+export async function setLibraryItemStarred(itemId: string, starred: boolean) {
+  const pool = await requirePool();
+  const result = await pool.query(
+    `UPDATE library_items SET starred = $2, last_activity_at = now()
+     WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+    [itemId, starred]
+  );
+  return result.rowCount === 1;
+}
+
+export async function setLibraryItemLocation(itemId: string, location: "inbox" | "library" | "archive") {
+  const pool = await requirePool();
+  const result = await pool.query(
+    `UPDATE library_items
+     SET location = $2,
+         archived_at = CASE WHEN $2 = 'archive' THEN now() ELSE NULL END,
+         last_activity_at = now()
+     WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+    [itemId, location]
+  );
+  return result.rowCount === 1;
+}
+
+export async function setLibraryItemCollection(itemId: string, collectionId: string | null) {
+  const pool = await requirePool();
+  const result = await pool.query(
+    `UPDATE library_items
+     SET collection_id = $2, last_activity_at = now()
+     WHERE id = $1
+       AND deleted_at IS NULL
+       AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM collections WHERE id = $2))
+     RETURNING id`,
+    [itemId, collectionId]
+  );
+  return result.rowCount === 1;
+}
+
+export async function setLibraryItemDeleted(itemId: string, deleted: boolean) {
+  const pool = await requirePool();
+  const result = await pool.query(
+    `UPDATE library_items
+     SET deleted_at = CASE WHEN $2 THEN now() ELSE NULL END,
+         last_activity_at = now()
+     WHERE id = $1 AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
+     RETURNING id`,
+    [itemId, deleted]
+  );
+  return result.rowCount === 1;
+}
+
+export type LibraryItemComment = {
+  id: string;
+  content: string;
+  createdAt: Date;
+  updatedAt: Date;
+  attachments: Array<{
+    id: string;
+    fileId: string;
+    originalName: string;
+    mimeType: string;
+    sizeBytes: number;
+    contentUrl: string;
+  }>;
+};
+
+export async function listLibraryItemComments(itemId: string) {
+  const pool = await requirePool();
+  const result = await pool.query<{
+    id: string;
+    content: string;
+    created_at: Date;
+    updated_at: Date;
+    attachments: Array<{ fileId: string; originalName: string; mimeType: string; sizeBytes: string | number }>;
+  }>(
+    `SELECT ic.id, ic.content, ic.created_at, ic.updated_at,
+       coalesce(
+         jsonb_agg(jsonb_build_object(
+           'fileId', f.id,
+           'originalName', f.original_name,
+           'mimeType', f.mime_type,
+           'sizeBytes', f.size_bytes
+         ) ORDER BY ca.sort_order, ca.created_at) FILTER (WHERE f.id IS NOT NULL),
+         '[]'::jsonb
+       ) AS attachments
+     FROM item_comments ic
+     LEFT JOIN comment_attachments ca ON ca.comment_id = ic.id
+     LEFT JOIN files f ON f.id = ca.file_id
+     WHERE ic.item_id = $1
+     GROUP BY ic.id
+     ORDER BY ic.created_at DESC`,
+    [itemId]
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    content: row.content,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    attachments: row.attachments.map((attachment) => ({
+      id: attachment.fileId,
+      fileId: attachment.fileId,
+      originalName: attachment.originalName,
+      mimeType: attachment.mimeType,
+      sizeBytes: Number(attachment.sizeBytes),
+      contentUrl: `/api/files/${attachment.fileId}/content`
+    }))
+  }));
+}
+
+export async function addLibraryItemComment(itemId: string, content: string) {
+  const normalized = content.trim();
+  if (!normalized || normalized.length > 5000) throw new Error("INVALID_COMMENT");
+  const pool = await requirePool();
+  const result = await pool.query<{ id: string; content: string; created_at: Date; updated_at: Date }>(
+    `INSERT INTO item_comments (item_id, content)
+     SELECT id, $2 FROM library_items WHERE id = $1 AND deleted_at IS NULL
+     RETURNING id, content, created_at, updated_at`,
+    [itemId, normalized]
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id, content: row.content, createdAt: row.created_at, updatedAt: row.updated_at, attachments: [] } : null;
+}
+
+export async function deleteLibraryItemComment(itemId: string, commentId: string) {
+  const deleted = await withTransaction(async (client) => {
+    const files = await client.query<{ id: string; relative_path: string }>(
+      `SELECT f.id, f.relative_path
+       FROM comment_attachments ca
+       JOIN files f ON f.id = ca.file_id AND f.role = 'comment_image'
+       JOIN item_comments ic ON ic.id = ca.comment_id
+       WHERE ic.id = $1 AND ic.item_id = $2
+       FOR UPDATE OF f`,
+      [commentId, itemId]
+    );
+    const result = await client.query("DELETE FROM item_comments WHERE id = $1 AND item_id = $2", [commentId, itemId]);
+    if (result.rowCount !== 1) return null;
+    if (files.rows.length) {
+      await client.query("DELETE FROM files WHERE id = ANY($1::uuid[])", [files.rows.map((file) => file.id)]);
+    }
+    return files.rows.map((file) => file.relative_path);
+  });
+  if (!deleted) return false;
+  await Promise.all(deleted.map((relativePath) => deleteStoredFile(relativePath).catch((error) => {
+    console.error("Failed to delete comment image from storage", error);
+    return false;
+  })));
+  return true;
+}
+
+export async function replaceLibraryItemTags(itemId: string, names: string[]) {
+  const normalized = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+  if (normalized.length > 20 || normalized.some((name) => name.length > 40)) throw new Error("INVALID_TAGS");
+  return withTransaction(async (client) => {
+    const item = await client.query("SELECT id FROM library_items WHERE id = $1 AND deleted_at IS NULL", [itemId]);
+    if (!item.rowCount) return false;
+    await client.query("DELETE FROM item_tags WHERE item_id = $1", [itemId]);
+    for (const name of normalized) {
+      const tag = await client.query<{ id: string }>(
+        `INSERT INTO tags (name) VALUES ($1)
+         ON CONFLICT (lower(name)) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+        [name]
+      );
+      await client.query("INSERT INTO item_tags (item_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [itemId, tag.rows[0].id]);
+    }
+    return true;
+  });
 }
 
 export async function promoteStaleInboxItems() {

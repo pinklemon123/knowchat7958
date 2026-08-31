@@ -11,6 +11,12 @@
 - SHA-256 内容寻址存储与重复文件检测
 - 待整理 Inbox，超过 48 小时可自动进入普通资料库
 - 最近使用页面与可自定义服务器封面
+- 首次设密、登录保护、密码修改与退出登录
+- 文件库、收藏、归档、回收站、全文搜索和设置页面
+- 自定义分类集合，可新建、重命名、删除、筛选，并支持拖放文件快速归类
+- 资料详情页、标签管理，以及支持图片和安全链接的文件评论
+- 按需调用的知识库 AI 总结与问答（文本、Markdown、小型图片）
+- AI 设置页可选择并持久化默认模型，支持普通对话和原生联网能力测试
 - PDF、图片、文本、Markdown、音频和视频浏览器预览
 - PostgreSQL 中的分类、标签、评论、归档和回收站数据模型
 - 联网新闻搜索、AI 对话、文章生成与独立图片页面
@@ -41,6 +47,7 @@ pnpm dev
 
 - 资料上传：<http://localhost:3000/inbox>
 - 最近使用：<http://localhost:3000/recent>
+- 登录入口：<http://localhost:3000/login>
 - 新闻与 AI：<http://localhost:3000>
 
 ## 环境变量
@@ -56,6 +63,10 @@ TAVILY_API_KEY=
 OPENAI_API_KEY=
 OPENAI_BASE_URL=
 OPENAI_MODEL=
+
+KNOWLEDGE_AI_API_KEY=
+KNOWLEDGE_AI_BASE_URL=https://api.gpt.ge
+KNOWLEDGE_AI_MODEL=gpt-4o-mini
 ```
 
 `.env.local`、`data/`、`node_modules/` 和构建缓存均已忽略，不应提交到仓库。
@@ -113,8 +124,13 @@ GET    /api/library
 GET    /api/library/cover
 POST   /api/library/cover
 DELETE /api/library/cover
+GET    /api/library/auth
+POST   /api/library/auth
+PATCH  /api/library/{itemId}
+GET    /api/library/{itemId}
+POST   /api/library/{itemId}/ai
 ```
 
 ## 当前阶段
 
-上传、存储、查重、数据库事务、待整理页面、最近页面和基础阅读层已经可用。下一阶段主要是文件库分类操作、收藏/归档/回收站，以及服务器端 Office 阅读组件。
+上传、存储、查重、数据库事务、资料库操作、标签、图文评论、登录保护和基础 AI 阅读已经可用。下一阶段主要是服务器端 Office/PDF 文本提取和更精细的权限策略。

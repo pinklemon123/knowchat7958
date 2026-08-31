@@ -31,6 +31,7 @@ export type TempUpload = {
   sizeBytes: number;
   title?: string;
   collectionId?: string;
+  fields: Record<string, string>;
 };
 
 export function getMaxUploadBytes() {
@@ -52,7 +53,10 @@ async function removeTempFile(tempPath: string | null) {
   }
 }
 
-export async function parseMultipartUpload(request: Request): Promise<TempUpload> {
+export async function parseMultipartUpload(
+  request: Request,
+  options: { maxUploadBytes?: number; allowedFields?: string[] } = {}
+): Promise<TempUpload> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
     throw new UploadError("INVALID_MULTIPART", "Content-Type must be multipart/form-data");
@@ -62,7 +66,8 @@ export async function parseMultipartUpload(request: Request): Promise<TempUpload
   }
 
   const directories = await ensureStorageDirectories();
-  const maxUploadBytes = getMaxUploadBytes();
+  const maxUploadBytes = options.maxUploadBytes ?? getMaxUploadBytes();
+  const allowedFields = new Set(options.allowedFields ?? ["title", "collectionId"]);
   let tempPath: string | null = null;
   let originalName = "";
   let reportedMimeType = "application/octet-stream";
@@ -100,7 +105,7 @@ export async function parseMultipartUpload(request: Request): Promise<TempUpload
     });
 
     parser.on("field", (name, value) => {
-      if (name === "title" || name === "collectionId") fields[name] = value.trim();
+      if (allowedFields.has(name)) fields[name] = value.trim();
     });
 
     parser.on("filesLimit", () => {
@@ -132,7 +137,8 @@ export async function parseMultipartUpload(request: Request): Promise<TempUpload
       reportedMimeType,
       sizeBytes: fileStat.size,
       title: fields.title || undefined,
-      collectionId: fields.collectionId || undefined
+      collectionId: fields.collectionId || undefined,
+      fields
     };
   } catch (error) {
     if (writePromise) {

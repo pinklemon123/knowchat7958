@@ -143,7 +143,7 @@ export function splitModels(models: string[]) {
   return {
     models: uniqueModels,
     normalModels: uniqueModels.filter((model) => !isWebSearchModel(model)),
-    webModels: webModels.length ? webModels : uniqueModels,
+    webModels,
     visionModels: uniqueModels.filter(isVisionModel),
     documentModels: uniqueModels.filter(isDocumentModel)
   };

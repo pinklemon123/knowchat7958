@@ -8,7 +8,6 @@ import {
   BookOpen,
   Clock3,
   Files,
-  Folder,
   Inbox,
   LayoutDashboard,
   Menu,
@@ -21,6 +20,7 @@ import {
   X
 } from "lucide-react";
 import styles from "./library-shell.module.css";
+import CollectionManager from "./collection-manager";
 
 type LibraryShellProps = {
   children: ReactNode;
@@ -28,13 +28,11 @@ type LibraryShellProps = {
 
 const mainNavigation = [
   { label: "工作台", icon: LayoutDashboard, href: "/" },
-  { label: "文件库", icon: Files, disabled: true },
+  { label: "文件库", icon: Files, href: "/library" },
   { label: "最近", icon: Clock3, href: "/recent" },
-  { label: "收藏", icon: Star, disabled: true },
+  { label: "收藏", icon: Star, href: "/favorites" },
   { label: "待整理", icon: Inbox, href: "/inbox", badge: true }
 ];
-
-const categoryNames = ["机器人", "数学", "Blender", "Lean"];
 
 export default function LibraryShell({ children }: LibraryShellProps) {
   const pathname = usePathname();
@@ -103,14 +101,6 @@ export default function LibraryShell({ children }: LibraryShellProps) {
         <nav className={styles.nav} aria-label="资料库导航">
           {mainNavigation.map((item) => {
             const Icon = item.icon;
-            if (item.disabled) {
-              return (
-                <span className={styles.disabledNav} key={item.label} title="即将开放">
-                  <Icon size={18} />
-                  <span>{item.label}</span>
-                </span>
-              );
-            }
             return (
               <Link
                 className={pathname === item.href ? styles.activeNav : styles.navLink}
@@ -125,21 +115,13 @@ export default function LibraryShell({ children }: LibraryShellProps) {
           })}
         </nav>
 
-        <div className={styles.sectionLabel}>分类</div>
-        <div className={styles.categories}>
-          {categoryNames.map((name) => (
-            <span key={name} title="分类管理将在下一阶段开放">
-              <Folder size={15} />
-              {name}
-            </span>
-          ))}
-        </div>
+        <CollectionManager />
 
         <div className={styles.sideSpacer} />
         <div className={styles.utilityNav}>
-          <span><Archive size={17} />归档</span>
-          <span><RotateCcw size={17} />回收站</span>
-          <span><Settings size={17} />设置</span>
+          <Link className={pathname === "/archive" ? styles.activeUtility : styles.utilityLink} href="/archive"><Archive size={17} />归档</Link>
+          <Link className={pathname === "/trash" ? styles.activeUtility : styles.utilityLink} href="/trash"><RotateCcw size={17} />回收站</Link>
+          <Link className={pathname === "/settings" ? styles.activeUtility : styles.utilityLink} href="/settings"><Settings size={17} />设置</Link>
           <button
             className={styles.themeToggle}
             type="button"
@@ -151,10 +133,10 @@ export default function LibraryShell({ children }: LibraryShellProps) {
           </button>
         </div>
 
-        <div className={styles.sideSearchHint}>
+        <Link className={styles.sideSearchHint} href="/search">
           <Search size={16} />
-          <span>搜索将在文件库开放</span>
-        </div>
+          <span>搜索文件</span>
+        </Link>
       </aside>
 
       <main className={styles.main}>{children}</main>

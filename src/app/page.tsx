@@ -229,7 +229,8 @@ export default function HomePage() {
         setVisionModels(nextVision);
         setDocumentModels(nextDocument);
         setSelectedNormalModel(data.current && nextNormal.includes(data.current) ? data.current : nextNormal[0]);
-        setSelectedWebModel(nextWeb[0] ?? "");
+        setSelectedWebModel(data.current && nextWeb.includes(data.current) ? data.current : nextWeb[0] ?? "");
+        if(data.current && nextWeb.includes(data.current))setModelMode("web");
         setSelectedVisionModel(nextVision.includes("gpt-4o") ? "gpt-4o" : nextVision[0]);
         setSelectedDocumentModel(nextDocument.includes("gpt-4o-all") ? "gpt-4o-all" : nextDocument[0]);
       } catch {
@@ -705,6 +706,7 @@ function HomeView({
       </section>
 
       <section className="portal-grid">
+        <PortalCard icon={BookOpenText} title="个人知识库" text="进入受密码保护的文件库、最近阅读、收藏与待整理空间。" onClick={() => { window.location.href = "/recent"; }} />
         <PortalCard icon={Newspaper} title="新闻搜索" text="检索新闻来源，自动记录最近搜索和阅读过的链接。" onClick={() => setActivePage("news")} />
         <PortalCard icon={Bot} title="历史对话" text="会话保存在本机浏览器，下次打开还能继续聊。" onClick={() => setActivePage("chat")} />
         <PortalCard icon={PenLine} title="文章草稿" text="把搜索来源整理成学习札记、摘要或文章草稿。" onClick={() => setActivePage("daily")} />

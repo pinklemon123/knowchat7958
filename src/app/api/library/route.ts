@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { listLibraryItems, promoteStaleInboxItems } from "@/lib/library";
 import { libraryLocations, type LibraryItemFilters } from "@/lib/library-types";
+import { isLibraryRequestAuthenticated, libraryUnauthorizedResponse } from "@/lib/library-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function booleanParam(value: string | null) {
   if (value === null) return undefined;
@@ -13,6 +15,7 @@ function booleanParam(value: string | null) {
 }
 
 export async function GET(request: Request) {
+  if (!(await isLibraryRequestAuthenticated(request))) return libraryUnauthorizedResponse();
   const url = new URL(request.url);
   const locationValue = url.searchParams.get("location");
   if (locationValue && !libraryLocations.includes(locationValue as (typeof libraryLocations)[number])) {
@@ -25,11 +28,16 @@ export async function GET(request: Request) {
   }
 
   const requestedLimit = Number(url.searchParams.get("limit") ?? 50);
+  const requestedCollection = url.searchParams.get("collection");
+  if (requestedCollection && requestedCollection !== "none" && !UUID_PATTERN.test(requestedCollection)) {
+    return NextResponse.json({ ok: false, code: "INVALID_COLLECTION_FILTER" }, { status: 400 });
+  }
   const filters: LibraryItemFilters = {
     location: locationValue as LibraryItemFilters["location"],
     query: url.searchParams.get("q")?.trim() || undefined,
     starred,
     onlyDeleted: url.searchParams.get("deleted") === "true",
+    collectionId: requestedCollection === "none" ? null : requestedCollection || undefined,
     limit: Number.isFinite(requestedLimit) ? requestedLimit : 50
   };
 

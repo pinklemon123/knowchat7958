@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createLibraryItemFromUpload, LibraryUploadValidationError } from "@/lib/library-write";
 import { parseMultipartUpload, UploadError } from "@/lib/upload";
+import { isLibraryRequestAuthenticated, libraryUnauthorizedResponse } from "@/lib/library-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ function uploadErrorStatus(error: UploadError) {
 }
 
 export async function POST(request: Request) {
+  if (!(await isLibraryRequestAuthenticated(request))) return libraryUnauthorizedResponse();
   try {
     const upload = await parseMultipartUpload(request);
     const result = await createLibraryItemFromUpload(upload);

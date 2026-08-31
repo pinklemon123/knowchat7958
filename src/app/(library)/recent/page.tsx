@@ -185,7 +185,7 @@ export default function RecentPage() {
             <div className={styles.emptyState}><Clock3 size={34} /><strong>{query ? "没有匹配的资料" : "还没有最近资料"}</strong><span>上传或打开文件后，它们会出现在这里。</span></div>
           ) : (
             <div className={styles.cardGrid}>{filteredItems.map((item) => (
-              <button className={styles.fileCard} key={item.id} onClick={() => setSelected(item)}>
+              <button className={styles.fileCard} key={item.id} draggable onDragStart={event=>{event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-library-item-id",item.id);event.dataTransfer.setData("text/plain",item.id)}} onClick={() => setSelected(item)}>
                 <span className={styles.cardIcon}><ItemIcon item={item} /></span>
                 <span className={styles.cardBody}><strong>{item.primaryFileName || item.title}</strong><small>{fileKind(item)} · {formatBytes(item.primarySizeBytes)}</small></span>
                 <span className={styles.cardMeta}>{item.collectionName || "未分类"}<small>{formatDate(item.lastOpenedAt || item.lastActivityAt)}</small></span>
@@ -224,6 +224,7 @@ export default function RecentPage() {
                   <div><dt>最近活动</dt><dd>{formatDate(selected.lastActivityAt)}</dd></div>
                 </dl>
                 <div className={styles.detailTags}>{selected.tags.length ? selected.tags.map((tag) => <span key={tag}>{tag}</span>) : <span>暂无标签</span>}</div>
+                <a className={styles.detailLink} href={`/item/${selected.id}`}>添加标签、评论或询问 AI <ArrowUpRight size={15} /></a>
               </aside>
             </div>
           </section>

@@ -1,0 +1,33 @@
+.page { display: grid; grid-template-columns: minmax(360px, 0.92fr) minmax(460px, 1.08fr); min-height: 100vh; color: #dce8de; background: #07110b; }
+.visual { position: relative; display: flex; flex-direction: column; min-height: 100vh; padding: clamp(28px, 5vw, 68px); overflow: hidden; background: radial-gradient(circle at 18% 12%, rgba(98, 143, 103, 0.36), transparent 34%), radial-gradient(circle at 80% 72%, rgba(48, 87, 57, 0.48), transparent 40%), linear-gradient(135deg, #102519, #08130c); border-right: 1px solid #24382a; }
+.visual::after { position: absolute; inset: 0; content: ""; opacity: 0.28; background-image: repeating-linear-gradient(116deg, transparent 0 44px, rgba(220, 239, 222, 0.035) 45px); }
+.brand { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; }
+.brand > span { display: grid; width: 42px; height: 42px; color: #e8f2e9; background: #315d3b; border-radius: 11px; place-items: center; }
+.brand strong,
+.brand small { display: block; }
+.brand strong { font-size: 14px; }
+.brand small { margin-top: 3px; color: #8fa492; font-size: 11px; }
+.visualCopy { position: relative; z-index: 1; margin: auto 0; }
+.visualCopy > span,
+.eyebrow { color: #8bb190; font-size: 10px; font-weight: 750; letter-spacing: 0.18em; }
+.visualCopy h1 { margin: 15px 0 20px; max-width: 600px; font-size: clamp(38px, 5vw, 68px); line-height: 1.08; font-weight: 630; letter-spacing: -0.045em; }
+.visualCopy p { max-width: 470px; color: #95a89a; font-size: 14px; line-height: 1.8; }
+.securityNote { position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 10px; max-width: 500px; padding-top: 22px; color: #829586; font-size: 11px; line-height: 1.6; border-top: 1px solid #29402f; }
+.securityNote svg { flex: none; color: #7ea384; }
+.formPane { display: grid; padding: 32px; place-items: center; }
+.formCard { display: grid; width: min(420px, 100%); gap: 23px; padding: clamp(28px, 4vw, 44px); background: #0f1d14; border: 1px solid #293e2e; border-radius: 16px; box-shadow: 0 22px 70px rgba(0, 0, 0, 0.34); }
+.formIcon { display: grid; width: 46px; height: 46px; color: #a9c6ad; background: #1b3322; border: 1px solid #2f4b36; border-radius: 11px; place-items: center; }
+.formCard h2 { margin: 8px 0 9px; font-size: 25px; font-weight: 640; }
+.formCard p { margin: 0; color: #849589; font-size: 12px; line-height: 1.7; }
+.formCard label { display: grid; gap: 7px; }
+.formCard label span { color: #9aac9f; font-size: 11px; }
+.formCard input { height: 44px; padding: 0 13px; color: #dce8de; font: inherit; background: #0a1610; border: 1px solid #2a4030; border-radius: 8px; outline: 0; }
+.formCard input:focus { border-color: #719478; box-shadow: 0 0 0 3px rgba(113, 148, 120, 0.13); }
+.formCard > button { height: 44px; color: #eff6f0; font: inherit; font-size: 13px; font-weight: 650; background: #477050; border: 1px solid #5a8362; border-radius: 8px; cursor: pointer; }
+.formCard > button:hover { background: #557d5d; }
+.formCard > button:disabled { opacity: 0.6; cursor: wait; }
+.error { padding: 10px 12px; color: #dca598; font-size: 11px; background: #35231e; border: 1px solid #573a31; border-radius: 8px; }
+.loading { color: #829586; font-size: 12px; }
+.recovery { color: #6f8274; font-size: 10px; line-height: 1.6; }
+.recovery code { color: #91aa95; }
+@media (max-width: 780px) { .page { grid-template-columns: 1fr; } .visual { min-height: 320px; padding: 26px; } .visualCopy { margin: 58px 0 38px; } .visualCopy h1 { font-size: 38px; } .securityNote { display: none; } .formPane { padding: 24px 18px 46px; } }

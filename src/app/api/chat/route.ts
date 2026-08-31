@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { completeChat, sourceContext } from "@/lib/llm";
 import { isWebSearchModel } from "@/lib/model-capabilities";
-import { configuredModel } from "@/lib/openai";
 import { searchTavily } from "@/lib/tavily";
 import type { ChatMessage, NewsResult } from "@/lib/types";
+import { selectedAIModel } from "@/lib/ai-settings";
 
 export const runtime = "nodejs";
 
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     const incomingMessages = (body.messages ?? []) as IncomingChatMessage[];
     const messages = incomingMessages.map(toChatMessage);
     const webSearch = body.webSearch !== false;
-    const model = typeof body.model === "string" ? body.model : undefined;
+    const model = typeof body.model === "string" ? body.model : await selectedAIModel();
     const nativeWebSearch = webSearch && Boolean(model && isWebSearchModel(model));
     const hasImages = incomingMessages.some((message) => Boolean(message.imageDataUrl));
     const hasDocuments = body.documentMode === true || incomingMessages.some((message) => Boolean(message.documentContent));
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       message,
       sources,
-      model: model ?? configuredModel(),
+      model,
       nativeWebSearch
     });
   } catch (error) {

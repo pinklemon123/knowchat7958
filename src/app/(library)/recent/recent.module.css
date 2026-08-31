@@ -105,6 +105,8 @@
 .detailPane dd { margin: 0; color: var(--recent-text); text-align: right; }
 .detailTags { display: flex; flex-wrap: wrap; gap: 6px; }
 .detailTags span { padding: 5px 8px; color: var(--recent-accent); font-size: 10px; background: var(--recent-surface-2); border: 1px solid var(--recent-line); border-radius: 6px; }
+.detailLink { display:flex; align-items:center; justify-content:center; gap:7px; margin-top:22px; padding:10px; color:var(--recent-accent); font-size:11px; text-decoration:none; background:var(--recent-surface-2); border:1px solid var(--recent-line); border-radius:8px; }
+.detailLink:hover { color:var(--recent-text); }
 
 @media (max-width: 920px) {
   .content { width: min(100% - 32px, 760px); }

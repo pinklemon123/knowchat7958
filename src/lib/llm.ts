@@ -1,5 +1,6 @@
 import type { ChatMessage, NewsResult } from "./types";
-import { configuredModel, openAIEndpoint } from "./openai";
+import { openAIEndpoint } from "./openai";
+import { selectedAIModel } from "./ai-settings";
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -10,27 +11,33 @@ type ChatCompletionResponse = {
 };
 
 export async function completeChat(messages: ChatMessage[], temperature = 0.3, requestedModel?: string, maxTokens = 1800) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = requestedModel?.trim() || configuredModel();
+  const apiKey = process.env.KNOWLEDGE_AI_API_KEY || process.env.OPENAI_API_KEY;
+  const model = requestedModel?.trim() || await selectedAIModel();
 
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
 
-  const response = await fetch(openAIEndpoint("chat/completions"), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens
-    }),
-    cache: "no-store"
-  });
+  let response: Response;
+  try {
+    response = await fetch(openAIEndpoint("chat/completions"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens
+      }),
+      cache: "no-store"
+    });
+  } catch (error) {
+    const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+    throw new Error(`Model connection failed${cause?.code ? ` (${cause.code})` : ""}: ${cause?.message || (error instanceof Error ? error.message : "fetch failed")}`);
+  }
 
   if (!response.ok) {
     const detail = await response.text();

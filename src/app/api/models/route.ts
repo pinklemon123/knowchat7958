@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fallbackModels, isChatModel, splitModels } from "@/lib/model-capabilities";
-import { configuredModel, openAIEndpoint } from "@/lib/openai";
+import { openAIEndpoint } from "@/lib/openai";
+import { selectedAIModel } from "@/lib/ai-settings";
 
 export const runtime = "nodejs";
 
@@ -11,8 +12,8 @@ type ModelListResponse = {
 };
 
 export async function GET() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const current = configuredModel();
+  const apiKey = process.env.KNOWLEDGE_AI_API_KEY || process.env.OPENAI_API_KEY;
+  const current = await selectedAIModel();
 
   if (!apiKey) {
     return NextResponse.json({ ...splitModels(fallbackModels), current, source: "fallback" });
@@ -40,11 +41,12 @@ export async function GET() {
       source: apiModels.length ? "api" : "fallback"
     });
   } catch (error) {
+    const cause = (error as { cause?: { code?: string; message?: string } }).cause;
     return NextResponse.json({
       ...splitModels(fallbackModels),
       current,
       source: "fallback",
-      error: error instanceof Error ? error.message : "Unable to load models"
+      error: cause?.message || (error instanceof Error ? error.message : "Unable to load models")
     });
   }
 }
