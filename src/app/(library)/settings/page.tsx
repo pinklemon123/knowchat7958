@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Activity, AlertTriangle, Bot, CheckCircle2, Database, HardDrive, KeyRound, LogOut, RefreshCcw, Save, Send, Server, ShieldCheck, Wifi, Wrench } from "lucide-react";
+import { Activity, AlertTriangle, Bot, CheckCircle2, Database, HardDrive, KeyRound, LogOut, RefreshCcw, Save, Send, Server, ShieldCheck, Trash2, Wifi, Wrench } from "lucide-react";
 import styles from "./settings.module.css";
 
 type HealthLevel = "ok" | "warning" | "error";
@@ -16,12 +16,20 @@ type HealthReport = {
   repairs: string[];
 };
 type HealthState = { autoRepairEnabled: boolean; updatedAt: string; reports: HealthReport[] };
+type TrashSummary = { itemCount: number; fileCount: number; sizeBytes: number };
 
 function formatUptime(seconds: number) {
   if (seconds < 60) return `${seconds} 秒`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`;
   return `${Math.floor(seconds / 86400)} 天 ${Math.floor((seconds % 86400) / 3600)} 小时`;
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  return `${(value / 1024 ** 3).toFixed(2)} GB`;
 }
 
 export default function SettingsPage() {
@@ -44,12 +52,17 @@ export default function SettingsPage() {
   const [healthState,setHealthState]=useState<HealthState|null>(null);
   const [healthBusy,setHealthBusy]=useState<"run"|"toggle"|"">("");
   const [healthError,setHealthError]=useState("");
+  const [trashSummary,setTrashSummary]=useState<TrashSummary|null>(null);
+  const [trashBusy,setTrashBusy]=useState(false);
+  const [trashMessage,setTrashMessage]=useState("");
+  const [trashError,setTrashError]=useState("");
 
   const filteredModels=useMemo(()=>{const query=modelFilter.trim().toLowerCase();return query?models.filter(model=>model.toLowerCase().includes(query)):models},[models,modelFilter]);
   const nativeWebCandidate=webModels.includes(selectedModel);
 
   useEffect(()=>{let cancelled=false;(async()=>{try{const [modelsResponse,settingsResponse]=await Promise.all([fetch("/api/models",{cache:"no-store"}),fetch("/api/library/ai-settings",{cache:"no-store"})]);const modelData=await modelsResponse.json();const settingsData=await settingsResponse.json();if(cancelled)return;const available=Array.isArray(modelData.models)?modelData.models:[];setModels(available);setWebModels(Array.isArray(modelData.webModels)?modelData.webModels:[]);setSelectedModel(settingsData.settings?.defaultModel||modelData.current||available[0]||"");}catch(loadError){if(!cancelled)setAiError(loadError instanceof Error?loadError.message:"模型列表读取失败")}finally{if(!cancelled)setModelsLoading(false)}})();return()=>{cancelled=true}},[]);
   useEffect(()=>{let cancelled=false;(async()=>{try{const response=await fetch("/api/library/system-health",{cache:"no-store"});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"状态简报读取失败");if(!cancelled)setHealthState(data.state)}catch(loadError){if(!cancelled)setHealthError(loadError instanceof Error?loadError.message:"状态简报读取失败")}})();return()=>{cancelled=true}},[]);
+  useEffect(()=>{let cancelled=false;(async()=>{try{const response=await fetch("/api/library/trash",{cache:"no-store"});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"回收站状态读取失败");if(!cancelled)setTrashSummary(data.summary)}catch(loadError){if(!cancelled)setTrashError(loadError instanceof Error?loadError.message:"回收站状态读取失败")}})();return()=>{cancelled=true}},[]);
 
   async function changePassword(event: FormEvent) {
     event.preventDefault();
@@ -74,6 +87,7 @@ export default function SettingsPage() {
   async function testModel(mode:"chat"|"web"){if(!selectedModel)return;setAiBusy(mode);setAiError("");setAiMessage("");setTestResult(null);try{const response=await fetch("/api/library/ai-settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:selectedModel,mode,prompt:mode==="chat"?testPrompt:undefined})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"模型测试失败");setTestResult(data)}catch(testError){setAiError(testError instanceof Error?testError.message:"模型测试失败")}finally{setAiBusy("")}}
   async function runHealthCheck(){setHealthBusy("run");setHealthError("");try{const response=await fetch("/api/library/system-health",{method:"POST"});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"自检失败");setHealthState(data.state)}catch(runError){setHealthError(runError instanceof Error?runError.message:"自检失败")}finally{setHealthBusy("")}}
   async function toggleAutoRepair(){if(!healthState)return;setHealthBusy("toggle");setHealthError("");try{const response=await fetch("/api/library/system-health",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:!healthState.autoRepairEnabled})});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"设置保存失败");setHealthState(data.state)}catch(toggleError){setHealthError(toggleError instanceof Error?toggleError.message:"设置保存失败")}finally{setHealthBusy("")}}
+  async function emptyTrash(){if(!trashSummary?.itemCount||trashBusy)return;const confirmed=window.confirm(`确定永久删除回收站中的 ${trashSummary.itemCount} 份资料吗？\n\n将删除 ${trashSummary.fileCount} 个实体文件（${formatBytes(trashSummary.sizeBytes)}），此操作无法撤销。`);if(!confirmed)return;setTrashBusy(true);setTrashError("");setTrashMessage("");try{const response=await fetch("/api/library/trash",{method:"DELETE"});const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"清空回收站失败");const result=data.result as {itemCount:number;deletedFileCount:number;missingFileCount:number;failedFileCount:number;freedBytes:number};setTrashSummary({itemCount:0,fileCount:0,sizeBytes:0});if(result.failedFileCount>0)setTrashError(`资料记录已删除，但有 ${result.failedFileCount} 个暂存文件未能从磁盘移除，请检查服务器日志和 data/trash。`);else setTrashMessage(`已永久删除 ${result.itemCount} 份资料和 ${result.deletedFileCount} 个文件，释放 ${formatBytes(result.freedBytes)}。${result.missingFileCount?`另有 ${result.missingFileCount} 个文件原本已不在磁盘。`:""}`)}catch(deleteError){setTrashError(deleteError instanceof Error?deleteError.message:"清空回收站失败")}finally{setTrashBusy(false)}}
 
   const latestReport=healthState?.reports[0];
 
@@ -99,6 +113,12 @@ export default function SettingsPage() {
         <div className={styles.testComposer}><textarea value={testPrompt} onChange={event=>setTestPrompt(event.target.value)} maxLength={1000}/><div><button onClick={()=>void saveModel()} disabled={Boolean(aiBusy)||!selectedModel}><Save size={15}/>{aiBusy==="save"?"保存中…":"保存默认模型"}</button><button onClick={()=>void testModel("chat")} disabled={Boolean(aiBusy)||!selectedModel}><Send size={15}/>{aiBusy==="chat"?"对话中…":"测试对话"}</button><button className={styles.webTest} onClick={()=>void testModel("web")} disabled={Boolean(aiBusy)||!selectedModel}><Wifi size={15}/>{aiBusy==="web"?"联网测试中…":"测试联网"}</button></div></div>
         {aiError&&<div className={styles.error}>{aiError}</div>}{aiMessage&&<div className={styles.success}>{aiMessage}</div>}{testResult&&<div className={styles.testResult}><div><CheckCircle2 size={16}/><strong>{testResult.verified?"测试通过":"测试完成，但未验证到联网来源"}</strong>{testResult.latencyMs!==undefined&&<span>{testResult.latencyMs} ms</span>}</div><p>{testResult.answer||testResult.message||"模型没有返回文字内容"}</p>{testResult.urls?.length?<div className={styles.testLinks}>{testResult.urls.map(url=><a href={url} target="_blank" rel="noopener noreferrer" key={url}>{url}</a>)}</div>:null}</div>}
         <details className={styles.webModels}><summary>查看识别到的原生联网候选（{webModels.length}）</summary><div>{webModels.map(model=><button className={model===selectedModel?styles.selectedCandidate:""} onClick={()=>{setSelectedModel(model);setTestResult(null)}} key={model}>{model}</button>)}</div></details>
+      </section>
+      <section className={`${styles.card} ${styles.trashCard}`}>
+        <div className={styles.cardTitle}><span><Trash2 size={19}/></span><div><h2>回收站清理</h2><p>永久删除已移入回收站的资料、评论附件和磁盘实体文件。执行后无法恢复。</p></div></div>
+        <div className={styles.trashControls}><div><strong>{trashSummary?`${trashSummary.itemCount} 份资料`:"正在读取…"}</strong><span>{trashSummary?`${trashSummary.fileCount} 个文件 · ${formatBytes(trashSummary.sizeBytes)}`:"正在统计回收站占用空间"}</span></div><button onClick={()=>void emptyTrash()} disabled={trashBusy||!trashSummary?.itemCount}><Trash2 size={15}/>{trashBusy?"正在永久删除…":trashSummary?.itemCount?"清空回收站":"回收站为空"}</button></div>
+        {trashError&&<div className={styles.error}>{trashError}</div>}{trashMessage&&<div className={styles.success}>{trashMessage}</div>}
+        <p className={styles.dangerNotice}>为避免数据库与文件状态不一致，系统会先将实体文件暂存，再提交数据库删除；事务失败时会自动恢复文件。</p>
       </section>
       <div className={styles.grid}>
         <section className={styles.card}><div className={styles.cardTitle}><span><KeyRound size={19} /></span><div><h2>修改访问密码</h2><p>密码更新后会生成新的会话密钥，其他设备需要重新登录。</p></div></div>

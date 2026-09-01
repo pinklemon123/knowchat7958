@@ -1,6 +1,7 @@
 import { getPool, withTransaction } from "./db";
 import type { LibraryItemFilters, LibraryItemSummary } from "./library-types";
-import { deleteStoredFile } from "./storage";
+import { deleteStoredFile, restoreStagedStoredFile, stageStoredFileForDeletion, type StagedStoredFile } from "./storage";
+import { ensureLibraryFullTextSchema, prepareLibraryFullTextSearch } from "./library-search";
 
 type LibraryItemRow = {
   id: string;
@@ -92,25 +93,19 @@ const libraryItemSelect = `
   ) comment_list ON true
 `;
 
-export async function listLibraryItems(filters: LibraryItemFilters = {}) {
-  const pool = await requirePool();
-  const values: unknown[] = [];
+function appendLibraryFilterConditions(filters: LibraryItemFilters, values: unknown[]) {
   const conditions: string[] = [];
 
-  if (filters.onlyDeleted) {
-    conditions.push("li.deleted_at IS NOT NULL");
-  } else if (!filters.includeDeleted) {
-    conditions.push("li.deleted_at IS NULL");
-  }
+  if (filters.onlyDeleted) conditions.push("li.deleted_at IS NOT NULL");
+  else if (!filters.includeDeleted) conditions.push("li.deleted_at IS NULL");
 
   if (filters.location) {
     values.push(filters.location);
     conditions.push(`li.location = $${values.length}`);
   }
 
-  if (filters.collectionId === null) {
-    conditions.push("li.collection_id IS NULL");
-  } else if (filters.collectionId) {
+  if (filters.collectionId === null) conditions.push("li.collection_id IS NULL");
+  else if (filters.collectionId) {
     values.push(filters.collectionId);
     conditions.push(`li.collection_id = $${values.length}`);
   }
@@ -124,6 +119,8 @@ export async function listLibraryItems(filters: LibraryItemFilters = {}) {
   if (query) {
     values.push(`%${query.toLowerCase()}%`);
     const parameter = `$${values.length}`;
+    values.push(query);
+    const fullTextParameter = `$${values.length}`;
     conditions.push(`(
       lower(li.title || ' ' || coalesce(li.description, '')) LIKE ${parameter}
       OR EXISTS (
@@ -139,10 +136,25 @@ export async function listLibraryItems(filters: LibraryItemFilters = {}) {
         SELECT 1 FROM item_comments search_comment
         WHERE search_comment.item_id = li.id AND lower(search_comment.content) LIKE ${parameter}
       )
+      OR EXISTS (
+        SELECT 1 FROM files search_file_text
+        WHERE search_file_text.item_id = li.id
+          AND to_tsvector('simple', coalesce(search_file_text.extracted_text, '')) @@ plainto_tsquery('simple', ${fullTextParameter})
+      )
     )`);
   }
 
-  const limit = Math.min(Math.max(filters.limit ?? 30, 1), 100);
+  return conditions;
+}
+
+export async function listLibraryItems(filters: LibraryItemFilters = {}) {
+  await ensureLibraryFullTextSchema();
+  if (filters.query?.trim()) await prepareLibraryFullTextSearch();
+  const pool = await requirePool();
+  const values: unknown[] = [];
+  const conditions = appendLibraryFilterConditions(filters, values);
+
+  const limit = Math.min(Math.max(filters.limit ?? 30, 1), 101);
   const offset = Math.max(filters.offset ?? 0, 0);
   values.push(limit, offset);
 
@@ -155,6 +167,19 @@ export async function listLibraryItems(filters: LibraryItemFilters = {}) {
   );
 
   return result.rows.map(mapLibraryItem);
+}
+
+export async function countLibraryItems(filters: LibraryItemFilters = {}) {
+  await ensureLibraryFullTextSchema();
+  if (filters.query?.trim()) await prepareLibraryFullTextSearch();
+  const pool = await requirePool();
+  const values: unknown[] = [];
+  const conditions = appendLibraryFilterConditions(filters, values);
+  const result = await pool.query<{ count: string | number }>(
+    `SELECT count(*) AS count FROM library_items li ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}`,
+    values
+  );
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 export async function getLibraryItem(itemId: string) {
@@ -226,6 +251,145 @@ export async function setLibraryItemDeleted(itemId: string, deleted: boolean) {
     [itemId, deleted]
   );
   return result.rowCount === 1;
+}
+
+export async function bulkUpdateLibraryItems(
+  itemIds: string[],
+  action: "archive" | "move-collection" | "trash",
+  collectionId: string | null = null
+) {
+  return withTransaction(async (client) => {
+    if (action === "move-collection" && collectionId) {
+      const collection = await client.query("SELECT id FROM collections WHERE id = $1", [collectionId]);
+      if (collection.rowCount !== 1) throw new Error("COLLECTION_NOT_FOUND");
+    }
+
+    const result = action === "archive"
+      ? await client.query(
+          `UPDATE library_items
+           SET location = 'archive', archived_at = now(), last_activity_at = now()
+           WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+          [itemIds]
+        )
+      : action === "move-collection"
+        ? await client.query(
+            `UPDATE library_items
+             SET collection_id = $2, last_activity_at = now()
+             WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+            [itemIds, collectionId]
+          )
+        : await client.query(
+            `UPDATE library_items
+             SET deleted_at = now(), last_activity_at = now()
+             WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+            [itemIds]
+          );
+    return result.rowCount ?? 0;
+  });
+}
+
+export type LibraryTrashSummary = {
+  itemCount: number;
+  fileCount: number;
+  sizeBytes: number;
+};
+
+export type EmptyLibraryTrashResult = LibraryTrashSummary & {
+  deletedFileCount: number;
+  missingFileCount: number;
+  failedFileCount: number;
+  freedBytes: number;
+};
+
+type TrashFileRow = {
+  relative_path: string;
+  size_bytes: string | number;
+};
+
+export async function getLibraryTrashSummary(): Promise<LibraryTrashSummary> {
+  const pool = await requirePool();
+  const result = await pool.query<{ item_count: string | number; file_count: string | number; size_bytes: string | number }>(
+    `SELECT count(DISTINCT li.id) AS item_count,
+            count(f.id) AS file_count,
+            coalesce(sum(f.size_bytes), 0) AS size_bytes
+     FROM library_items li
+     LEFT JOIN files f ON f.item_id = li.id
+     WHERE li.deleted_at IS NOT NULL`
+  );
+  const row = result.rows[0];
+  return {
+    itemCount: Number(row?.item_count ?? 0),
+    fileCount: Number(row?.file_count ?? 0),
+    sizeBytes: Number(row?.size_bytes ?? 0)
+  };
+}
+
+export async function emptyLibraryTrash(): Promise<EmptyLibraryTrashResult> {
+  const stagedFiles: Array<StagedStoredFile & { sizeBytes: number }> = [];
+  let itemCount = 0;
+  let fileCount = 0;
+  let sizeBytes = 0;
+  let missingFileCount = 0;
+
+  try {
+    await withTransaction(async (client) => {
+      const items = await client.query<{ id: string }>(
+        "SELECT id FROM library_items WHERE deleted_at IS NOT NULL FOR UPDATE"
+      );
+      const itemIds = items.rows.map((item) => item.id);
+      itemCount = itemIds.length;
+      if (!itemIds.length) return;
+
+      const files = await client.query<TrashFileRow>(
+        `SELECT relative_path, size_bytes
+         FROM files
+         WHERE item_id = ANY($1::uuid[])
+         FOR UPDATE`,
+        [itemIds]
+      );
+      fileCount = files.rows.length;
+      sizeBytes = files.rows.reduce((total, file) => total + Number(file.size_bytes), 0);
+
+      for (const file of files.rows) {
+        const staged = await stageStoredFileForDeletion(file.relative_path);
+        if (staged) stagedFiles.push({ ...staged, sizeBytes: Number(file.size_bytes) });
+        else missingFileCount += 1;
+      }
+
+      const deleted = await client.query(
+        "DELETE FROM library_items WHERE id = ANY($1::uuid[]) AND deleted_at IS NOT NULL",
+        [itemIds]
+      );
+      if (deleted.rowCount !== itemIds.length) throw new Error("TRASH_CHANGED_DURING_PURGE");
+    });
+  } catch (error) {
+    for (const staged of stagedFiles.reverse()) {
+      await restoreStagedStoredFile(staged).catch((restoreError) => {
+        console.error("Failed to restore a staged library file after trash purge rollback", restoreError);
+      });
+    }
+    throw error;
+  }
+
+  let deletedFileCount = 0;
+  let failedFileCount = 0;
+  let freedBytes = 0;
+  for (const staged of stagedFiles) {
+    try {
+      const deleted = await deleteStoredFile(staged.trashRelativePath, "trash");
+      if (deleted) {
+        deletedFileCount += 1;
+        freedBytes += staged.sizeBytes;
+      } else {
+        missingFileCount += 1;
+      }
+    } catch (error) {
+      failedFileCount += 1;
+      console.error("Failed to permanently delete a staged trash file", error);
+    }
+  }
+
+  return { itemCount, fileCount, sizeBytes, deletedFileCount, missingFileCount, failedFileCount, freedBytes };
 }
 
 export type LibraryItemComment = {

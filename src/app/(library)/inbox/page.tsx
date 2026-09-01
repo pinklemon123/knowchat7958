@@ -50,6 +50,8 @@ type UploadResponse = {
   existingItemId?: string;
 };
 type Collection = { id:string; name:string; itemCount:number };
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const PAGE_SIZE = 30;
 
 function createClientId() {
   if (
@@ -93,15 +95,18 @@ function sendUpload(file: globalThis.File, onProgress: (progress: number) => voi
     const form = new FormData();
     form.append("file", file);
     request.open("POST", "/api/files/upload");
+    request.timeout = 120_000;
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
     };
-    request.onerror = () => reject(new Error("网络连接失败"));
+    request.onerror = () => reject(new Error("网络连接失败，请检查网络后重试"));
+    request.ontimeout = () => reject(new Error("上传超时，请稍后重试"));
+    request.onabort = () => reject(new Error("上传已取消"));
     request.onload = () => {
       try {
         resolve({ status: request.status, data: JSON.parse(request.responseText) as UploadResponse });
       } catch {
-        reject(new Error("服务器返回了无法识别的结果"));
+        reject(new Error(`服务器返回了无法识别的结果（HTTP ${request.status}）`));
       }
     };
     request.send(form);
@@ -122,19 +127,29 @@ export default function InboxPage() {
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [draggingItem,setDraggingItem]=useState<string|null>(null);
   const [collections,setCollections]=useState<Collection[]>([]);
+  const [selectedIds,setSelectedIds]=useState<Set<string>>(new Set());
+  const [bulkBusy,setBulkBusy]=useState(false);
+  const [hasMore,setHasMore]=useState(false);
+  const [loadingMore,setLoadingMore]=useState(false);
+  const [totalCount,setTotalCount]=useState(0);
 
-  const loadItems = useCallback(async () => {
+  const loadItems = useCallback(async (offset = 0) => {
     setLoadError("");
+    if (offset > 0) setLoadingMore(true);
     try {
-      const response = await fetch("/api/library?location=inbox&limit=100", { cache: "no-store" });
+      const response = await fetch(`/api/library?location=inbox&limit=${PAGE_SIZE}&offset=${offset}`, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "无法读取待整理资料");
-      setItems(data.items);
+      setItems((current) => offset === 0 ? data.items : [...current, ...data.items]);
+      setHasMore(Boolean(data.hasMore));
+      setTotalCount(Number(data.count ?? data.items.length));
+      if (offset === 0) setSelectedIds(new Set());
       window.dispatchEvent(new CustomEvent("library:inbox-count", { detail: Number(data.count ?? 0) }));
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "无法读取待整理资料");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, []);
 
@@ -152,23 +167,35 @@ export default function InboxPage() {
     if (!files.length) return;
     setNotice("");
 
-    const newTasks = files.map((file) => ({
+    const acceptedFiles = files.filter((file) => file.size <= MAX_UPLOAD_BYTES);
+    const rejectedFiles = files.filter((file) => file.size > MAX_UPLOAD_BYTES);
+    if (rejectedFiles.length > 0) setNotice(`${rejectedFiles.length} 个文件超过 100 MB，已跳过`);
+    if (!acceptedFiles.length) {
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
+
+    const newTasks: UploadTask[] = acceptedFiles.map((file) => ({
       id: createClientId(),
       fileName: file.name,
       progress: 0,
-      status: "queued" as const,
+      status: "queued",
       message: "等待上传"
     }));
     setTasks((current) => [...newTasks, ...current].slice(0, 8));
 
     let added = 0;
-    for (let index = 0; index < files.length; index += 1) {
-      const file = files[index];
+    for (let index = 0; index < acceptedFiles.length; index += 1) {
+      const file = acceptedFiles[index];
       const task = newTasks[index];
       updateTask(task.id, { status: "uploading", message: "正在写入临时目录…" });
       try {
         const result = await sendUpload(file, (progress) => updateTask(task.id, { progress }));
-        if (result.status === 201 && result.data.ok) {
+        if (result.status === 401 || result.data.code === "LIBRARY_AUTH_REQUIRED") {
+          updateTask(task.id, { status: "error", message: "登录状态已失效，请重新登录" });
+          window.setTimeout(() => { window.location.href = "/login"; }, 800);
+          break;
+        } else if (result.status === 201 && result.data.ok) {
           added += 1;
           updateTask(task.id, { status: "success", progress: 100, message: "已添加到待整理" });
         } else if (result.status === 409 && result.data.code === "DUPLICATE_FILE") {
@@ -178,10 +205,12 @@ export default function InboxPage() {
             message: "此文件已经存在于资料库",
             existingItemId: result.data.existingItemId
           });
+        } else if (result.status === 413 || result.data.code === "FILE_TOO_LARGE") {
+          updateTask(task.id, { status: "error", message: "文件超过 100 MB 上传限制" });
         } else {
           updateTask(task.id, {
             status: "error",
-            message: result.data.error || `上传失败（${result.status}）`
+            message: result.data.error || `上传失败（HTTP ${result.status}）`
           });
         }
       } catch (error) {
@@ -190,7 +219,7 @@ export default function InboxPage() {
     }
 
     if (added > 0) {
-      setNotice(`已将 ${added} 份资料添加到待整理`);
+      setNotice(`已将 ${added} 份资料添加到待整理${rejectedFiles.length ? `，另有 ${rejectedFiles.length} 个超过 100 MB 的文件已跳过` : ""}`);
       await loadItems();
     }
     if (fileInput.current) fileInput.current.value = "";
@@ -205,6 +234,8 @@ export default function InboxPage() {
         .some((value) => String(value).toLowerCase().includes(normalized))
     );
   }, [items, query]);
+
+  useEffect(() => { setSelectedIds(new Set()); }, [query]);
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -243,6 +274,10 @@ export default function InboxPage() {
     }
   }
 
+  function toggleSelected(id:string){setSelectedIds(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})}
+  function toggleAll(){setSelectedIds(filteredItems.length>0&&filteredItems.every(item=>selectedIds.has(item.id))?new Set():new Set(filteredItems.map(item=>item.id)))}
+  async function runBulkAction(action:"archive"|"move-collection"|"trash",collectionId:string|null=null){const ids=[...selectedIds];if(!ids.length||bulkBusy)return;if(action==="trash"&&!window.confirm(`确定将选中的 ${ids.length} 份资料移到回收站吗？`))return;setBulkBusy(true);setNotice("");try{const response=await fetch("/api/library/bulk",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids,action,collectionId})});if(response.status===401){window.location.replace("/login");return}const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"批量操作失败");setNotice(`已完成 ${data.updatedCount} 份资料的批量操作`);await loadItems(0);window.dispatchEvent(new Event("library:collections-changed"))}catch(error){setNotice(error instanceof Error?error.message:"批量操作失败")}finally{setBulkBusy(false)}}
+
   return (
     <div className={styles.page}>
       <header className={styles.topbar}>
@@ -270,7 +305,7 @@ export default function InboxPage() {
             <p>最近上传但尚未归类的资料，48 小时后会自动进入普通资料库。</p>
           </div>
           <div className={styles.countCard}>
-            <strong>{items.length}</strong>
+            <strong>{totalCount}</strong>
             <span>份待整理资料</span>
           </div>
         </section>
@@ -333,8 +368,10 @@ export default function InboxPage() {
             <div className={styles.listHint}><Sparkles size={14} />文件优先，AI 工具稍后按需调用</div>
           </div>
 
+          <div className={styles.bulkBar}><label><input type="checkbox" checked={filteredItems.length>0&&filteredItems.every(item=>selectedIds.has(item.id))} onChange={toggleAll}/><span>{selectedIds.size?`已选择 ${selectedIds.size} 项`:"全选当前已加载资料"}</span></label><div><button onClick={()=>void runBulkAction("archive")} disabled={!selectedIds.size||bulkBusy}><Archive size={14}/>批量归档</button><label><FolderInput size={14}/><select value="__choose__" onChange={event=>{const value=event.target.value;if(value!=="__choose__")void runBulkAction("move-collection",value||null)}} disabled={!selectedIds.size||bulkBusy}><option value="__choose__">移动到分类</option><option value="">未分类</option>{collections.map(collection=><option value={collection.id} key={collection.id}>{collection.name}</option>)}</select></label><button className={styles.bulkDanger} onClick={()=>void runBulkAction("trash")} disabled={!selectedIds.size||bulkBusy}><Trash2 size={14}/>批量删除</button></div></div>
+
           <div className={styles.tableHeader}>
-            <span className={styles.checkCell} />
+            <label className={styles.checkbox}><input type="checkbox" checked={filteredItems.length>0&&filteredItems.every(item=>selectedIds.has(item.id))} onChange={toggleAll} aria-label="全选当前已加载资料"/><span/></label>
             <span>名称</span>
             <span>分类</span>
             <span>标签</span>
@@ -363,7 +400,7 @@ export default function InboxPage() {
                 onDragStart={event=>{setDraggingItem(item.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-library-item-id",item.id);event.dataTransfer.setData("text/plain",item.id)}}
                 onDragEnd={()=>setDraggingItem(null)}
               >
-                <label className={styles.checkbox}><input type="checkbox" aria-label={`选择 ${item.title}`} /><span /></label>
+                <label className={styles.checkbox}><input type="checkbox" checked={selectedIds.has(item.id)} onChange={()=>toggleSelected(item.id)} aria-label={`选择 ${item.title}`} /><span /></label>
                 <div className={styles.nameCell}>
                   {isImage ? (
                     <img className={styles.thumbnail} src={`/api/files/${item.primaryFileId}/content`} alt="" />
@@ -395,6 +432,7 @@ export default function InboxPage() {
               </article>
             );
           })}
+          {!loading&&!loadError&&hasMore&&!query&&<div className={styles.loadMore}><button onClick={()=>void loadItems(items.length)} disabled={loadingMore}>{loadingMore?"正在加载…":`加载更多（已显示 ${items.length}/${totalCount}）`}</button></div>}
         </section>
       </div>
     </div>

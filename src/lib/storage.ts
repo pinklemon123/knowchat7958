@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
-import { copyFile, mkdir, stat, unlink } from "node:fs/promises";
+import { copyFile, mkdir, rename, stat, unlink } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -19,6 +19,11 @@ export type StoredFileResult = {
   absolutePath: string;
   relativePath: string;
   duplicate: boolean;
+};
+
+export type StagedStoredFile = {
+  originalRelativePath: string;
+  trashRelativePath: string;
 };
 
 export function getDataRoot() {
@@ -143,6 +148,29 @@ export async function moveIntoLibrary(tempFilePath: string, sha256: string, exte
     }
     throw error;
   }
+}
+
+export async function stageStoredFileForDeletion(relativePath: string): Promise<StagedStoredFile | null> {
+  await ensureStorageDirectories();
+  const sourcePath = safeResolveStoragePath(relativePath, "library");
+  const trashRelativePath = path.posix.join(`purge-${randomUUID()}`, relativePath.replaceAll("\\", "/"));
+  const trashPath = safeResolveStoragePath(trashRelativePath, "trash");
+  await mkdir(path.dirname(trashPath), { recursive: true });
+
+  try {
+    await rename(sourcePath, trashPath);
+    return { originalRelativePath: relativePath, trashRelativePath };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function restoreStagedStoredFile(staged: StagedStoredFile) {
+  const trashPath = safeResolveStoragePath(staged.trashRelativePath, "trash");
+  const originalPath = safeResolveStoragePath(staged.originalRelativePath, "library");
+  await mkdir(path.dirname(originalPath), { recursive: true });
+  await rename(trashPath, originalPath);
 }
 
 export async function deleteStoredFile(relativePath: string, area: StorageArea = "library") {

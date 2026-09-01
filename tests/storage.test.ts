@@ -8,8 +8,11 @@ import {
   getStorageDirectories,
   hashFile,
   moveIntoLibrary,
+  restoreStagedStoredFile,
+  stageStoredFileForDeletion,
   safeResolveStoragePath
 } from "../src/lib/storage.ts";
+import { extractTextForIndex } from "../src/lib/text-extraction.ts";
 
 const projectRoot = process.cwd();
 const fixturePath = path.join(projectRoot, "tests", "fixtures", "test.txt");
@@ -29,6 +32,9 @@ const projectDirectories = await ensureStorageDirectories();
 process.env.LIBRARY_DATA_DIR = runtimeRoot;
 const testDirectories = await ensureStorageDirectories();
 const digest = await hashFile(fixturePath);
+const extractedFixtureText = await extractTextForIndex(fixturePath, "text/plain", "txt", (await stat(fixturePath)).size);
+assert.ok(extractedFixtureText?.includes("GreenChat storage layer"));
+assert.equal(await extractTextForIndex(fixturePath, "application/pdf", "pdf", (await stat(fixturePath)).size), null);
 const relativePath = buildStoragePath(digest, ".txt");
 const expectedAbsolutePath = safeResolveStoragePath(relativePath);
 
@@ -45,6 +51,14 @@ await copyFile(fixturePath, secondTemp);
 const secondStore = await moveIntoLibrary(secondTemp, digest, "txt");
 assert.equal(secondStore.duplicate, true);
 assert.equal(await fileExists(secondTemp), false);
+
+const stagedFile = await stageStoredFileForDeletion(relativePath);
+assert.ok(stagedFile);
+assert.equal(await fileExists(expectedAbsolutePath), false);
+assert.equal(await fileExists(safeResolveStoragePath(stagedFile.trashRelativePath, "trash")), true);
+await restoreStagedStoredFile(stagedFile);
+assert.equal(await fileExists(expectedAbsolutePath), true);
+assert.equal(await fileExists(safeResolveStoragePath(stagedFile.trashRelativePath, "trash")), false);
 
 const tempBeforeError = await readdir(testDirectories.temp);
 let missingFileError = "";
@@ -64,12 +78,14 @@ const result = {
   testDirectories,
   fixturePath,
   programSha256: digest,
+  textExtractionPassed: true,
   relativePath,
   absolutePath: expectedAbsolutePath,
   actualFileExists: await fileExists(expectedAbsolutePath),
   firstStoreDuplicate: firstStore.duplicate,
   secondStoreDuplicate: secondStore.duplicate,
   duplicateTempRemoved: !(await fileExists(secondTemp)),
+  trashStagingAndRestorePassed: true,
   missingFileError,
   tempFilesAfterError: tempAfterError,
   pathTraversalRejected: true

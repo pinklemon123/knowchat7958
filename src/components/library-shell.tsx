@@ -54,7 +54,7 @@ export default function LibraryShell({ children }: LibraryShellProps) {
   }, [theme]);
 
   useEffect(() => {
-    fetch("/api/library?location=inbox&limit=100", { cache: "no-store" })
+    fetch("/api/library?location=inbox&limit=1", { cache: "no-store" })
       .then((response) => response.json())
       .then((data) => {
         if (data.ok) setInboxCount(Number(data.count ?? 0));

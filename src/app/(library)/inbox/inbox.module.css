@@ -97,6 +97,7 @@
 .listHeading h2 { margin: 0; color: #344a37; font-size: 16px; font-weight: 650; }
 .listHeading span { display: block; margin-top: 4px; color: #899289; font-size: 11px; }
 .listHint { display: flex; align-items: center; gap: 6px; color: #829083; font-size: 11px; }
+.bulkBar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:10px;padding:10px 12px;background:#fbfcf8;border:1px solid #d6ded2;border-radius:9px}.bulkBar>label{display:flex;align-items:center;gap:8px;color:#7f8980;font-size:10px}.bulkBar>div{display:flex;gap:6px}.bulkBar button,.bulkBar>div>label{display:flex;align-items:center;gap:6px;min-height:34px;padding:0 10px;color:#526054;font:inherit;font-size:10px;background:#edf2e9;border:1px solid #d6ded2;border-radius:7px}.bulkBar button{cursor:pointer}.bulkBar button:disabled,.bulkBar select:disabled{opacity:.45;cursor:not-allowed}.bulkBar select{max-width:145px;color:#29342b;font:inherit;font-size:10px;background:transparent;border:0;outline:0}.bulkBar .bulkDanger{color:#a46658}.loadMore{display:flex;justify-content:center;padding:18px;background:rgba(251,252,248,.84);border-radius:0 0 10px 10px}.loadMore button{min-width:210px;height:38px;color:#496d4e;font:inherit;font-size:11px;background:#edf3e9;border:1px solid #d3dfd0;border-radius:8px;cursor:pointer}.loadMore button:disabled{opacity:.55}
 
 .tableHeader,
 .fileRow {
@@ -199,6 +200,7 @@
 :global(html[data-library-theme="dark"]) .listHeading h2 { color: #cbdccf; }
 :global(html[data-library-theme="dark"]) .listHeading span,
 :global(html[data-library-theme="dark"]) .listHint { color: #788b7e; }
+:global(html[data-library-theme="dark"]) .bulkBar{background:#101e15;border-color:#263a2b}:global(html[data-library-theme="dark"]) .bulkBar button,:global(html[data-library-theme="dark"]) .bulkBar>div>label,:global(html[data-library-theme="dark"]) .loadMore button{color:#aebfb1;background:#192e20;border-color:#2c4733}:global(html[data-library-theme="dark"]) .bulkBar select{color:#dce8de}:global(html[data-library-theme="dark"]) .loadMore{background:rgba(14,27,18,.76)}
 :global(html[data-library-theme="dark"]) .tableHeader { color: #6f8275; border-color: #263a2b; }
 :global(html[data-library-theme="dark"]) .fileRow { background: rgba(15, 29, 20, 0.9); border-color: #213426; }
 :global(html[data-library-theme="dark"]) .fileRow:hover { background: #14261a; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.17); }
@@ -260,6 +262,7 @@
   .desktopUploadHelp { display: none !important; }
   .mobileUploadHelp { display: block !important; }
   .listHint { display: none; }
+  .bulkBar{align-items:stretch;flex-direction:column}.bulkBar>div{display:grid;grid-template-columns:1fr 1fr}.bulkBar>div>label{grid-column:1/-1}.bulkBar select{max-width:none;width:100%}
   .tableHeader { display: none; }
   .fileRow { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 9px; padding: 11px 7px; }
   .fileRow > :nth-child(3),

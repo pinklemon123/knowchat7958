@@ -65,6 +65,7 @@ function formatDate(value: string) {
 }
 
 type Collection = { id:string; name:string; itemCount:number };
+const PAGE_SIZE = 30;
 
 export default function LibraryBrowser({ mode, initialQuery = "", initialCollectionId }: { mode: BrowserMode; initialQuery?: string; initialCollectionId?: string }) {
   const router = useRouter();
@@ -76,11 +77,16 @@ export default function LibraryBrowser({ mode, initialQuery = "", initialCollect
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [draggingItem,setDraggingItem]=useState<string|null>(null);
   const [collections,setCollections]=useState<Collection[]>([]);
+  const [selectedIds,setSelectedIds]=useState<Set<string>>(new Set());
+  const [bulkBusy,setBulkBusy]=useState(false);
+  const [loadingMore,setLoadingMore]=useState(false);
+  const [hasMore,setHasMore]=useState(false);
+  const [totalCount,setTotalCount]=useState(0);
   const copy = modeCopy[mode];
   const selectedCollection=initialCollectionId?collections.find(collection=>collection.id===initialCollectionId):null;
 
   const endpoint = useMemo(() => {
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
     if (mode === "library" && !initialCollectionId) params.set("location", "library");
     if (mode === "favorites") params.set("starred", "true");
     if (mode === "archive") params.set("location", "archive");
@@ -90,23 +96,26 @@ export default function LibraryBrowser({ mode, initialQuery = "", initialCollect
     return `/api/library?${params.toString()}`;
   }, [mode, initialQuery, initialCollectionId]);
 
-  const loadItems = useCallback(async () => {
-    setLoading(true);
+  const loadItems = useCallback(async (offset = 0) => {
+    if (offset === 0) setLoading(true); else setLoadingMore(true);
     setError("");
     try {
-      const response = await fetch(endpoint, { cache: "no-store" });
+      const response = await fetch(`${endpoint}&offset=${offset}`, { cache: "no-store" });
       if (response.status === 401) { window.location.replace("/login"); return; }
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "无法读取资料");
-      setItems(data.items);
+      setItems((current) => offset === 0 ? data.items : [...current, ...data.items]);
+      setHasMore(Boolean(data.hasMore));
+      setTotalCount(Number(data.count ?? data.items.length));
+      if (offset === 0) setSelectedIds(new Set());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "无法读取资料");
     } finally {
-      setLoading(false);
+      if (offset === 0) setLoading(false); else setLoadingMore(false);
     }
   }, [endpoint]);
 
-  useEffect(() => { void loadItems(); }, [loadItems]);
+  useEffect(() => { void loadItems(0); }, [loadItems]);
   useEffect(()=>{const loadCollections=async()=>{try{const response=await fetch("/api/collections",{cache:"no-store"});const data=await response.json();if(data.ok)setCollections(data.collections)}catch{}};void loadCollections();const refresh=()=>{void loadItems();void loadCollections()};window.addEventListener("library:items-changed",refresh);window.addEventListener("library:collections-changed",refresh);return()=>{window.removeEventListener("library:items-changed",refresh);window.removeEventListener("library:collections-changed",refresh)}},[loadItems]);
 
   async function runAction(item: BrowserItem, action: "star" | "move" | "move-collection" | "trash" | "restore", payload: Record<string, unknown> = {}) {
@@ -119,7 +128,7 @@ export default function LibraryBrowser({ mode, initialQuery = "", initialCollect
         body: JSON.stringify({ action, ...payload })
       });
       if (!response.ok) throw new Error("操作失败");
-      await loadItems();
+      await loadItems(0);
       if(action==="move-collection")window.dispatchEvent(new Event("library:collections-changed"));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "操作失败");
@@ -133,6 +142,10 @@ export default function LibraryBrowser({ mode, initialQuery = "", initialCollect
     if (normalized) router.push(`/search?q=${encodeURIComponent(normalized)}`);
   }
 
+  function toggleSelected(id:string){setSelectedIds(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})}
+  function toggleAll(){setSelectedIds(items.length>0&&items.every(item=>selectedIds.has(item.id))?new Set():new Set(items.map(item=>item.id)))}
+  async function runBulkAction(action:"archive"|"move-collection"|"trash",collectionId:string|null=null){const ids=[...selectedIds];if(!ids.length||bulkBusy)return;if(action==="trash"&&!window.confirm(`确定将选中的 ${ids.length} 份资料移到回收站吗？`))return;setBulkBusy(true);setError("");try{const response=await fetch("/api/library/bulk",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids,action,collectionId})});if(response.status===401){window.location.replace("/login");return}const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||"批量操作失败");await loadItems(0);window.dispatchEvent(new Event("library:collections-changed"))}catch(actionError){setError(actionError instanceof Error?actionError.message:"批量操作失败")}finally{setBulkBusy(false)}}
+
   return (
     <div className={styles.page}>
       <header className={styles.topbar}>
@@ -140,15 +153,18 @@ export default function LibraryBrowser({ mode, initialQuery = "", initialCollect
         <button className={styles.searchButton} onClick={submitSearch}>搜索</button>
       </header>
       <div className={styles.content}>
-        <section className={styles.heading}><div><span>{selectedCollection?"COLLECTION":copy.eyebrow}</span><h1>{selectedCollection?.name||(initialCollectionId==="none"?"未分类":copy.title)}</h1><p>{selectedCollection?"拖动资料到左侧其他分类即可快速调整。":initialCollectionId==="none"?"尚未放入任何分类的资料。":mode === "search" && initialQuery ? `“${initialQuery}” 的搜索结果` : copy.description}</p></div><strong>{items.length}<small>份资料</small></strong></section>
+        <section className={styles.heading}><div><span>{selectedCollection?"COLLECTION":copy.eyebrow}</span><h1>{selectedCollection?.name||(initialCollectionId==="none"?"未分类":copy.title)}</h1><p>{selectedCollection?"拖动资料到左侧其他分类即可快速调整。":initialCollectionId==="none"?"尚未放入任何分类的资料。":mode === "search" && initialQuery ? `“${initialQuery}” 的搜索结果` : copy.description}</p></div><strong>{totalCount}<small>份资料</small></strong></section>
+
+        {mode!=="trash"&&<section className={styles.bulkBar}><label><input type="checkbox" checked={items.length>0&&items.every(item=>selectedIds.has(item.id))} onChange={toggleAll}/><span>{selectedIds.size?`已选择 ${selectedIds.size} 项`:"全选当前已加载资料"}</span></label><div><button onClick={()=>void runBulkAction("archive")} disabled={!selectedIds.size||bulkBusy||mode==="archive"}><Archive size={14}/>批量归档</button><label><FolderInput size={14}/><select value="__choose__" onChange={event=>{const value=event.target.value;if(value!=="__choose__")void runBulkAction("move-collection",value||null)}} disabled={!selectedIds.size||bulkBusy}><option value="__choose__">移动到分类</option><option value="">未分类</option>{collections.map(collection=><option value={collection.id} key={collection.id}>{collection.name}</option>)}</select></label><button className={styles.bulkDanger} onClick={()=>void runBulkAction("trash")} disabled={!selectedIds.size||bulkBusy}><Trash2 size={14}/>批量删除</button></div></section>}
 
         <section className={styles.listSection}>
-          <div className={styles.tableHeader}><span>名称</span><span>分类</span><span>位置</span><span>最近活动</span><span /></div>
+          <div className={`${styles.tableHeader} ${mode!=="trash"?styles.withSelection:""}`}>{mode!=="trash"&&<span/>}<span>名称</span><span>分类</span><span>位置</span><span>最近活动</span><span /></div>
           {loading && <div className={styles.empty}>正在读取资料库…</div>}
           {!loading && error && <div className={styles.empty}><strong>{error}</strong><button onClick={() => void loadItems()}>重试</button></div>}
           {!loading && !error && items.length === 0 && <div className={styles.empty}><FolderOpen size={39} /><strong>{copy.empty}</strong><span>{mode === "library" ? "待整理资料在 48 小时后会自动进入这里。" : "之后的资料会显示在这里。"}</span></div>}
           {!loading && !error && items.map((item) => (
-            <article className={`${styles.row} ${busyItem === item.id ? styles.busy : ""} ${draggingItem===item.id?styles.draggingRow:""}`} key={item.id} draggable={mode!=="trash"} onDragStart={event=>{setDraggingItem(item.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-library-item-id",item.id);event.dataTransfer.setData("text/plain",item.id)}} onDragEnd={()=>setDraggingItem(null)}>
+            <article className={`${styles.row} ${mode!=="trash"?styles.withSelection:""} ${selectedIds.has(item.id)?styles.selectedRow:""} ${busyItem === item.id ? styles.busy : ""} ${draggingItem===item.id?styles.draggingRow:""}`} key={item.id} draggable={mode!=="trash"} onDragStart={event=>{setDraggingItem(item.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-library-item-id",item.id);event.dataTransfer.setData("text/plain",item.id)}} onDragEnd={()=>setDraggingItem(null)}>
+              {mode!=="trash"&&<label className={styles.rowCheck}><input type="checkbox" checked={selectedIds.has(item.id)} onChange={()=>toggleSelected(item.id)} aria-label={`选择 ${item.title}`}/><span/></label>}
               <div className={styles.nameCell}><span className={styles.fileIcon}>{itemIcon(item)}</span><div><Link href={`/item/${item.id}`}>{item.primaryFileName || item.title}</Link><small>{formatBytes(item.primarySizeBytes)}{item.tags.length ? ` · ${item.tags.slice(0, 2).join(" · ")}` : ""}</small></div></div>
               <span className={styles.collection}>{item.collectionName || "未分类"}</span>
               <span className={styles.location}>{item.location === "inbox" ? "待整理" : item.location === "archive" ? "归档" : "文件库"}</span>
@@ -165,6 +181,7 @@ export default function LibraryBrowser({ mode, initialQuery = "", initialCollect
               </div>
             </article>
           ))}
+          {!loading&&!error&&hasMore&&<div className={styles.loadMore}><button onClick={()=>void loadItems(items.length)} disabled={loadingMore}>{loadingMore?"正在加载…":`加载更多（已显示 ${items.length}/${totalCount}）`}</button></div>}
         </section>
       </div>
     </div>

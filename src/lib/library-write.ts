@@ -9,6 +9,7 @@ import {
   moveIntoLibrary
 } from "./storage";
 import type { TempUpload } from "./upload";
+import { ensureLibraryFullTextSchema, extractTextForIndex } from "./library-search";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -147,6 +148,13 @@ export async function createLibraryItemFromUpload(upload: TempUpload): Promise<C
     tempConsumed = true;
     storedRelativePath = stored.relativePath;
     createdPhysicalFile = !stored.duplicate;
+    await ensureLibraryFullTextSchema();
+    const extractedText = await extractTextForIndex(
+      stored.absolutePath,
+      upload.reportedMimeType || "application/octet-stream",
+      extension,
+      upload.sizeBytes
+    );
 
     try {
       const created = await withTransaction(async (client) => {
@@ -163,10 +171,10 @@ export async function createLibraryItemFromUpload(upload: TempUpload): Promise<C
         const item = itemResult.rows[0];
 
         const fileResult = await client.query<CreatedFileRow>(
-          `INSERT INTO files (
+           `INSERT INTO files (
              item_id, role, original_name, storage_name, relative_path,
-             mime_type, extension, size_bytes, sha256
-           ) VALUES ($1, 'primary', $2, $3, $4, $5, $6, $7, $8)
+             mime_type, extension, size_bytes, sha256, extracted_text
+           ) VALUES ($1, 'primary', $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id, item_id, role, original_name, relative_path,
                      mime_type, extension, size_bytes, sha256, created_at`,
           [
@@ -177,7 +185,8 @@ export async function createLibraryItemFromUpload(upload: TempUpload): Promise<C
             upload.reportedMimeType || "application/octet-stream",
             extension,
             upload.sizeBytes,
-            sha256
+            sha256,
+            extractedText
           ]
         );
 

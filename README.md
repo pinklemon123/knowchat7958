@@ -13,12 +13,15 @@
 - 最近使用页面与可自定义服务器封面
 - 首次设密、登录保护、密码修改与退出登录
 - 文件库、收藏、归档、回收站、全文搜索和设置页面
+- 设置页可统计并永久清空回收站，同时删除数据库记录与磁盘实体文件
 - 自定义分类集合，可新建、重命名、删除、筛选，并支持拖放文件快速归类
+- 资料列表每次加载 30 条，支持加载更多、全选与批量归档、移动分类、删除
 - 资料详情页、标签管理，以及支持图片和安全链接的文件评论
 - 按需调用的知识库 AI 总结与问答（文本、Markdown、小型图片）
 - AI 设置页可选择并持久化默认模型，支持普通对话和原生联网能力测试
 - PDF、图片、文本、Markdown、音频和视频浏览器预览
 - PostgreSQL 中的分类、标签、评论、归档和回收站数据模型
+- 文本、Markdown、JSON 等文本类文件正文提取与 PostgreSQL 全文索引
 - 联网新闻搜索、AI 对话、文章生成与独立图片页面
 - 本地文件存储与数据库事务补偿，上传失败自动清理临时文件
 
@@ -78,9 +81,10 @@ KNOWLEDGE_AI_MODEL=gpt-4o-mini
 ```powershell
 psql -d 数据库名 -f db/init/001_schema.sql
 psql -d 数据库名 -f db/init/002_library_schema.sql
+psql -d 数据库名 -f db/init/003_library_full_text.sql
 ```
 
-两份 SQL 迁移均可重复执行。资料库核心表包括：
+三份 SQL 迁移均可重复执行；应用也会在首次使用资料库时补建全文索引字段。资料库核心表包括：
 
 - `collections`
 - `library_items`
@@ -127,6 +131,9 @@ DELETE /api/library/cover
 GET    /api/library/auth
 POST   /api/library/auth
 PATCH  /api/library/{itemId}
+PATCH  /api/library/bulk
+GET    /api/library/trash
+DELETE /api/library/trash
 GET    /api/library/{itemId}
 POST   /api/library/{itemId}/ai
 ```
