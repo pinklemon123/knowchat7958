@@ -51,6 +51,17 @@ type UploadResponse = {
 };
 type Collection = { id:string; name:string; itemCount:number };
 
+function createClientId() {
+  if (
+    typeof globalThis.crypto !== "undefined" &&
+    typeof globalThis.crypto.randomUUID === "function"
+  ) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function formatBytes(value: number | null) {
   if (value === null) return "—";
   if (value < 1024) return `${value} B`;
@@ -142,7 +153,7 @@ export default function InboxPage() {
     setNotice("");
 
     const newTasks = files.map((file) => ({
-      id: crypto.randomUUID(),
+      id: createClientId(),
       fileName: file.name,
       progress: 0,
       status: "queued" as const,
