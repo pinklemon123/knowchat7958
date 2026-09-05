@@ -6,6 +6,8 @@ export type LocalChatMessage = {
   imageDataUrl?: string;
   documentName?: string;
   documentContent?: string;
+  documentDataUrl?: string;
+  documentType?: string;
   sources?: NewsResult[];
   createdAt: number;
 };
@@ -118,7 +120,7 @@ export function newChatSession(model: string, mode: "normal" | "web" | "document
     messages: [
       {
         role: "assistant",
-        content: "你好，我可以帮你检索新闻、整理资料，也可以识别你上传的图片。对话会保存在本机浏览器里。",
+        content: "你好，我可以帮你检索新闻、整理资料，也可以识别照片、阅读 PDF 和文本文件。对话会保存在本机浏览器里。",
         createdAt: now
       }
     ],

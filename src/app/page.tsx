@@ -33,6 +33,7 @@ import {
   Wifi
 } from "lucide-react";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { MarkdownMessage } from "@/components/markdown-message";
 import {
   localData,
   newChatSession,
@@ -84,7 +85,8 @@ type AttachedImage = {
 };
 
 type AttachedDocument = {
-  content: string;
+  content?: string;
+  dataUrl?: string;
   name: string;
   type: string;
   size: number;
@@ -115,7 +117,24 @@ function imageMessage(content: string, imageDataUrl: string): LocalChatMessage {
 }
 
 function documentMessage(content: string, document: AttachedDocument): LocalChatMessage {
-  return { role: "user", content, documentName: document.name, documentContent: document.content, createdAt: Date.now() };
+  return {
+    role: "user",
+    content,
+    documentName: document.name,
+    documentContent: document.content,
+    documentDataUrl: document.dataUrl,
+    documentType: document.type,
+    createdAt: Date.now()
+  };
+}
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("无法读取文件"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
 }
 
 function resizeImage(file: File) {
@@ -179,11 +198,11 @@ export default function HomePage() {
   const [normalModels, setNormalModels] = useState<string[]>(["gpt-5.5"]);
   const [webModels, setWebModels] = useState<string[]>([]);
   const [visionModels, setVisionModels] = useState<string[]>(["gpt-4o"]);
-  const [documentModels, setDocumentModels] = useState<string[]>(["gpt-4o-all", "gpt-4-all"]);
+  const [documentModels, setDocumentModels] = useState<string[]>(["gemini-2.5-pro", "gpt-4o-all", "gpt-4-all"]);
   const [selectedNormalModel, setSelectedNormalModel] = useState("gpt-5.5");
   const [selectedWebModel, setSelectedWebModel] = useState("");
   const [selectedVisionModel, setSelectedVisionModel] = useState("gpt-4o");
-  const [selectedDocumentModel, setSelectedDocumentModel] = useState("gpt-4o-all");
+  const [selectedDocumentModel, setSelectedDocumentModel] = useState("gemini-2.5-pro");
   const [attachedImage, setAttachedImage] = useState<AttachedImage | null>(null);
   const [attachedDocument, setAttachedDocument] = useState<AttachedDocument | null>(null);
   const [chatSessions, setChatSessions] = useState<LocalChatSession[]>([]);
@@ -192,8 +211,13 @@ export default function HomePage() {
   const [readHistory, setReadHistory] = useState<LocalReadRecord[]>([]);
   const [favorites, setFavorites] = useState<LocalFavorite[]>([]);
 
+  const localFileModel = selectedDocumentModel.toLowerCase().startsWith("gemini-")
+    ? selectedDocumentModel
+    : documentModels.find((model) => model.toLowerCase().startsWith("gemini-")) ?? "gemini-2.5-pro";
   const activeModel = attachedImage
     ? selectedVisionModel || selectedNormalModel
+    : attachedDocument?.dataUrl
+    ? localFileModel
     : modelMode === "document"
     ? selectedDocumentModel || selectedNormalModel
     : modelMode === "web"
@@ -206,6 +230,17 @@ export default function HomePage() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    function closeMenuOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setMenuOpen(false);
+    }
+
+    window.addEventListener("keydown", closeMenuOnEscape);
+    return () => window.removeEventListener("keydown", closeMenuOnEscape);
+  }, [menuOpen]);
 
   useEffect(() => {
     void createAnonymousSession();
@@ -232,16 +267,21 @@ export default function HomePage() {
         setSelectedWebModel(data.current && nextWeb.includes(data.current) ? data.current : nextWeb[0] ?? "");
         if(data.current && nextWeb.includes(data.current))setModelMode("web");
         setSelectedVisionModel(nextVision.includes("gpt-4o") ? "gpt-4o" : nextVision[0]);
-        setSelectedDocumentModel(nextDocument.includes("gpt-4o-all") ? "gpt-4o-all" : nextDocument[0]);
+        const preferredDocumentModel =
+          nextDocument.find((model) => model === "gemini-2.5-pro") ??
+          nextDocument.find((model) => model.toLowerCase().startsWith("gemini-")) ??
+          nextDocument.find((model) => model === "gpt-4o-all") ??
+          nextDocument[0];
+        setSelectedDocumentModel(preferredDocumentModel);
       } catch {
         if (!cancelled) {
           setNormalModels(["gpt-5.5"]);
           setWebModels([]);
           setVisionModels(["gpt-4o"]);
-          setDocumentModels(["gpt-4o-all", "gpt-4-all"]);
+          setDocumentModels(["gemini-2.5-pro", "gpt-4o-all", "gpt-4-all"]);
           setSelectedNormalModel("gpt-5.5");
           setSelectedVisionModel("gpt-4o");
-          setSelectedDocumentModel("gpt-4o-all");
+          setSelectedDocumentModel("gemini-2.5-pro");
         }
       }
     }
@@ -351,12 +391,14 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: pending.messages.map(({ role, content, imageDataUrl, documentName, documentContent }) => ({
+          messages: pending.messages.map(({ role, content, imageDataUrl, documentName, documentContent, documentDataUrl, documentType }) => ({
             role,
             content,
             imageDataUrl,
             documentName,
-            documentContent
+            documentContent,
+            documentDataUrl,
+            documentType
           })),
           webSearch: modelMode === "web",
           documentMode: modelMode === "document",
@@ -408,6 +450,7 @@ export default function HomePage() {
       return;
     }
     const dataUrl = await resizeImage(file);
+    setAttachedDocument(null);
     setAttachedImage({ dataUrl, name: file.name });
   }
 
@@ -415,28 +458,45 @@ export default function HomePage() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      alert("文档太大，请选择 2MB 以内的文本类文件。");
-      return;
-    }
 
     const lowerName = file.name.toLowerCase();
-    const readable =
+    const isPdf = file.type === "application/pdf" || lowerName.endsWith(".pdf");
+    const isText =
       file.type.startsWith("text/") ||
       [".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".log", ".ts", ".tsx", ".js", ".jsx", ".css", ".py", ".java", ".go", ".rs"].some((ext) =>
         lowerName.endsWith(ext)
       );
 
-    if (!readable) {
-      alert("当前本地上传先支持文本类文档；PDF/Word 可以在文档模式里直接粘贴可访问的文件 URL 让文件模型读取。");
+    if (!isPdf && !isText) {
+      alert("当前支持 PDF、TXT、Markdown、CSV、JSON 和常见代码文本。Word/PPT 请先转为 PDF，或粘贴公网文件 URL。");
       return;
     }
 
-    const content = (await file.text()).slice(0, 65000);
-    setAttachedDocument({ content, name: file.name, type: file.type || "text/plain", size: file.size });
-    setModelMode("document");
-  }
+    if (isPdf && file.size > 10 * 1024 * 1024) {
+      alert("PDF 太大，请选择 10 MB 以内的文件。");
+      return;
+    }
+    if (isText && file.size > 2 * 1024 * 1024) {
+      alert("文本文件太大，请选择 2 MB 以内的文件。");
+      return;
+    }
 
+    setAttachedImage(null);
+    setModelMode("document");
+
+    if (isPdf) {
+      const dataUrl = await fileToDataUrl(file);
+      const geminiModel = documentModels.find((model) => model.toLowerCase().startsWith("gemini-"));
+      if (geminiModel && !selectedDocumentModel.toLowerCase().startsWith("gemini-")) {
+        setSelectedDocumentModel(geminiModel);
+      }
+      setAttachedDocument({ dataUrl, name: file.name, type: "application/pdf", size: file.size });
+      return;
+    }
+
+    const documentContent = (await file.text()).slice(0, 65000);
+    setAttachedDocument({ content: documentContent, name: file.name, type: file.type || "text/plain", size: file.size });
+  }
   async function generateArticle(prompt = articlePrompt) {
     setArticleLoading(true);
     try {
@@ -493,7 +553,13 @@ export default function HomePage() {
   return (
     <main className={`app-shell ${menuOpen ? "menu-open" : ""}`}>
       <aside className="rail">
-        <button className="icon-button" aria-label="展开导航" onClick={() => setMenuOpen((value) => !value)}>
+        <button
+          className="icon-button menu-trigger"
+          aria-label={menuOpen ? "收起导航" : "展开导航"}
+          aria-expanded={menuOpen}
+          aria-controls="primary-navigation"
+          onClick={() => setMenuOpen((value) => !value)}
+        >
           {menuOpen ? <ChevronLeft size={20} /> : <Menu size={20} />}
         </button>
         {navItems.map((item) => {
@@ -509,10 +575,14 @@ export default function HomePage() {
         </button>
       </aside>
 
-      <aside className="side-menu" aria-hidden={!menuOpen}>
+      <aside id="primary-navigation" className="side-menu" aria-hidden={!menuOpen}>
         <div className="side-head">
-          <span>导航</span>
-          <button className="icon-button" aria-label="收起导航" onClick={() => setMenuOpen(false)}>
+          <div className="side-title">
+            <span>WORKSPACE</span>
+            <strong>导航</strong>
+            <small>快速切换你的工作区</small>
+          </div>
+          <button className="icon-button side-close" aria-label="收起导航" onClick={() => setMenuOpen(false)}>
             <ChevronLeft size={20} />
           </button>
         </div>
@@ -541,6 +611,8 @@ export default function HomePage() {
           </div>
         </div>
       </aside>
+
+      <button className="menu-backdrop" type="button" aria-label="关闭导航" tabIndex={menuOpen ? 0 : -1} onClick={() => setMenuOpen(false)} />
 
       <section className={`workspace page-${activePage}`}>
         <Topbar activePage={activePage} query={query} setQuery={setQuery} loading={loading} runSearch={runSearch} />
@@ -1000,10 +1072,25 @@ function ChatView({
   generateArticle: (prompt?: string) => Promise<void>;
   articleLoading: boolean;
 }) {
+  const compatibleDocumentModels = attachedDocument?.dataUrl
+    ? documentModels.filter((model) => model.toLowerCase().startsWith("gemini-"))
+    : documentModels;
   const pickerModels =
-    modelMode === "web" ? (webModels.length ? webModels : normalModels) : modelMode === "document" ? documentModels : normalModels;
+    modelMode === "web"
+      ? webModels.length
+        ? webModels
+        : normalModels
+      : modelMode === "document"
+      ? compatibleDocumentModels
+      : normalModels;
   const pickerValue =
-    modelMode === "web" ? selectedWebModel || selectedNormalModel : modelMode === "document" ? selectedDocumentModel : selectedNormalModel;
+    modelMode === "web"
+      ? selectedWebModel || selectedNormalModel
+      : modelMode === "document"
+      ? attachedDocument?.dataUrl
+        ? activeModel
+        : selectedDocumentModel
+      : selectedNormalModel;
 
   return (
     <section className="chat-page">
@@ -1085,7 +1172,7 @@ function ChatView({
                 ? "联网模型会直接使用模型内置搜索。"
                 : "没有内置联网模型时，会用 Tavily 搜索后把来源一起交给对话模型。"
               : modelMode === "document"
-              ? "可上传文本类文档；PDF/Word 可粘贴公开文件 URL 交给文件模型读取。"
+              ? attachedDocument?.dataUrl ? "本地 PDF 会通过 Base64 发送至 AI 服务，并自动使用兼容的 Gemini 文件模型。" : "支持本地 PDF、TXT/Markdown 等文本；Word/PPT 可转为 PDF，公网文件也可直接粘贴 URL。"
               : "普通模型会基于模型自身能力回答。"}
           </small>
         </div>
@@ -1119,7 +1206,7 @@ function ChatView({
                     <span>{message.documentName}</span>
                   </div>
                 ) : null}
-                <div className="message-text">{message.content}</div>
+                <MarkdownMessage content={message.content} />
                 {message.sources?.length ? <MessageSources sources={message.sources} /> : null}
               </div>
             </div>
@@ -1132,6 +1219,10 @@ function ChatView({
           ) : null}
         </div>
         <form className="chat-composer" onSubmit={sendChat}>
+          <div className="composer-capabilities">
+            <span>多模态输入</span>
+            <small>照片识别 · PDF/TXT 阅读 · 内容会发送至所选 AI 服务</small>
+          </div>
           {attachedImage ? (
             <div className="attached-image">
               <img src={attachedImage.dataUrl} alt={attachedImage.name} />
@@ -1145,7 +1236,7 @@ function ChatView({
             <div className="attached-document">
               <FileText size={18} />
               <span>{attachedDocument.name}</span>
-              <small>{Math.ceil(attachedDocument.size / 1024)} KB</small>
+              <small>{Math.ceil(attachedDocument.size / 1024)} KB · {attachedDocument.dataUrl ? "Gemini 文件分析" : "文本解析"}</small>
               <button type="button" onClick={clearAttachedDocument} aria-label="移除文档">
                 <Trash2 size={15} />
               </button>
@@ -1157,9 +1248,9 @@ function ChatView({
           </label>
           <label className="icon-button image-upload" aria-label="上传文档">
             <FileText size={18} />
-            <input type="file" accept=".txt,.md,.csv,.json,.xml,.html,.htm,.log,.ts,.tsx,.js,.jsx,.css,.py,.java,.go,.rs,text/*" onChange={(event) => void attachDocument(event)} />
+            <input type="file" accept=".pdf,.txt,.md,.csv,.json,.xml,.html,.htm,.log,.ts,.tsx,.js,.jsx,.css,.py,.java,.go,.rs,application/pdf,text/*" onChange={(event) => void attachDocument(event)} />
           </label>
-          <input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="问一个新闻、学习或资料整理问题" />
+          <input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={attachedDocument ? "询问这份文档，例如：总结重点并引用页码" : attachedImage ? "询问这张图片，例如：识别文字并整理要点" : "问一个新闻、学习或资料整理问题"} />
           <button className="icon-button active" type="submit" aria-label="发送" disabled={chatLoading}>
             <Send size={18} />
           </button>
