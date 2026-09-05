@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "7853:3000"
+      - "127.0.0.1:7853:3000"
     env_file:
       - .env.local
     environment:

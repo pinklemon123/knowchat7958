@@ -10,6 +10,43 @@ import remarkMath from "remark-math";
 
 type MarkdownMessageProps = { content: string };
 type CodeElementProps = { className?: string; children?: ReactNode };
+type HastNode = {
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+function cssPropertyToReact(property: string) {
+  return property
+    .trim()
+    .replace(/^-ms-/, "ms-")
+    .replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+}
+
+function rehypeReactInlineStyles() {
+  return (tree: HastNode) => {
+    function visit(node: HastNode) {
+      const rawStyle = node.properties?.style;
+
+      if (typeof rawStyle === "string") {
+        const style: Record<string, string> = {};
+
+        for (const declaration of rawStyle.split(";")) {
+          const colon = declaration.indexOf(":");
+          if (colon < 1) continue;
+          const property = cssPropertyToReact(declaration.slice(0, colon));
+          const value = declaration.slice(colon + 1).trim();
+          if (property && value) style[property] = value;
+        }
+
+        node.properties!.style = style;
+      }
+
+      node.children?.forEach(visit);
+    }
+
+    visit(tree);
+  };
+}
 
 function plainText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -74,7 +111,7 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
     <div className="message-text markdown-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: false }]]}
+        rehypePlugins={[rehypeKatex, rehypeReactInlineStyles, [rehypeHighlight, { detect: false }]]}
         components={markdownComponents}
       >
         {normalizedContent}

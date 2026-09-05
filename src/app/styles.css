@@ -823,7 +823,7 @@ textarea {
   max-width: min(780px, 82%);
   padding: 16px 18px;
   line-height: 1.75;
-  white-space: pre-wrap;
+  white-space: normal;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.055);
@@ -834,7 +834,7 @@ textarea {
 }
 
 .message-text {
-  white-space: pre-wrap;
+  white-space: normal;
 }
 
 .document-chip {
@@ -1580,14 +1580,19 @@ textarea {
   margin: 0;
   padding: 17px 18px 19px;
   overflow-x: auto;
+  overflow-wrap: normal;
   color: #d7e4df;
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 13px;
   line-height: 1.65;
   tab-size: 2;
+  white-space: pre;
+  word-break: normal;
 }
 
 .markdown-code-block code {
+  display: block;
+  min-width: max-content;
   font-family: inherit;
 }
 
@@ -1650,7 +1655,14 @@ textarea {
   background: rgba(138, 203, 163, 0.1);
 }
 
+.markdown-body .katex {
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .markdown-body .katex-display {
+  max-width: 100%;
   margin: 1.2em 0;
   padding: 12px 14px;
   overflow-x: auto;
@@ -1658,6 +1670,12 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(4, 20, 17, 0.34);
+}
+
+.markdown-body .katex-display > .katex {
+  display: block;
+  min-width: max-content;
+  text-align: center;
 }
 
 .chat-row.user .markdown-body strong,
